@@ -1,0 +1,279 @@
+[
+  {
+    "name": "org.elasticsearch.common.logging.ClusterIdConverter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.ConsoleThrowablePatternConverter",
+    "methods": [
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "org.apache.logging.log4j.core.config.Configuration",
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.CustomMapFieldsConverter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "org.apache.logging.log4j.core.config.Configuration",
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.ECSJsonLayout",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newBuilder",
+        "parameterTypes": []
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.ESJsonLayout",
+    "methods": [
+      {
+        "name": "createLayout",
+        "parameterTypes": [
+          "java.lang.String",
+          "java.nio.charset.Charset",
+          "java.lang.String[]",
+          "org.apache.logging.log4j.core.config.Configuration"
+        ]
+      },
+      {
+        "name": "newBuilder",
+        "parameterTypes": []
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.ESJsonLayout$Builder",
+    "methods": [],
+    "fields": [
+      {
+        "name": "config"
+      }
+    ]
+  },
+  {
+    "name": "org.elasticsearch.common.logging.HeaderWarningAppender",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": [
+          "java.lang.String",
+          "org.apache.logging.log4j.core.Filter"
+        ]
+      },
+      {
+        "name": "createAppender",
+        "parameterTypes": [
+          "java.lang.String",
+          "org.apache.logging.log4j.core.Filter"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.JsonThrowablePatternConverter",
+    "methods": [
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "org.apache.logging.log4j.core.config.Configuration",
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.NodeAndClusterIdConverter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.NodeIdConverter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.NodeNamePatternConverter",
+    "methods": [
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.RateLimitingFilter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "<init>",
+        "parameterTypes": [
+          "org.apache.logging.log4j.core.Filter.Result",
+          "org.apache.logging.log4j.core.Filter.Result"
+        ]
+      },
+      {
+        "name": "createFilter",
+        "parameterTypes": [
+          "org.apache.logging.log4j.core.Filter.Result",
+          "org.apache.logging.log4j.core.Filter.Result"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "org.elasticsearch.common.logging.TraceIdConverter",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      },
+      {
+        "name": "newInstance",
+        "parameterTypes": [
+          "java.lang.String[]"
+        ]
+      }
+    ],
+    "fields": []
+  },
+  {
+    "name": "java.net.URL",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true
+  },
+  {
+    "name": "java.security.CodeSource",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true
+  },
+  {
+    "name": "java.util.Properties",
+    "allDeclaredConstructors": true,
+    "allPublicMethods": true
+  },
+  {
+    "name": "org.elasticsearch.xcontent.spi.XContentProvider",
+    "allPublicConstructors": true,
+    "allPublicMethods": true,
+    "allPublicFields": true
+  },
+  {
+    "name": "org.elasticsearch.xcontent.impl.XContentProviderIMpl",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "org.elasticsearch.jdk.ModuleQualifiedExportsService",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true,
+    "allDeclaredFields": true,
+    "allPublicFields": true
+  },
+  {
+    "name": " org.elasticsearch.nativeaccess.exports.NativeAccessModuleExportsService",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true,
+    "allDeclaredFields": true,
+    "allPublicFields": true
+  },
+  {
+    "name": "org.elasticsearch.plugins.PluginsLoader",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true,
+    "allDeclaredFields": true,
+    "allPublicFields": true
+  },
+  {
+    "name": "org.elasticsearch.plugins.PluginsLoader$1",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true,
+    "allDeclaredFields": true,
+    "allPublicFields": true
+  },
+  {
+    "name": "org.elasticsearch.plugins.PluginsLoader$2",
+    "allDeclaredConstructors": true,
+    "allPublicConstructors": true,
+    "allDeclaredMethods": true,
+    "allPublicMethods": true,
+    "allDeclaredFields": true,
+    "allPublicFields": true
+  }
+]

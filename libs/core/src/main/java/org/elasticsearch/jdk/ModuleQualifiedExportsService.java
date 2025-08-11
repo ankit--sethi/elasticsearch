@@ -40,15 +40,21 @@ import java.util.stream.Stream;
 public abstract class ModuleQualifiedExportsService {
 
     private static final Logger logger = LogManager.getLogger(ModuleQualifiedExportsService.class);
+    private static final boolean IS_NATIVE_IMAGE = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
 
     // holds instances of ModuleQualfiedExportsService that exist in the boot layer
     private static class Holder {
         private static final Map<String, List<ModuleQualifiedExportsService>> exportsServices;
 
         static {
+            System.out.println("Entered static block");
             Map<String, List<ModuleQualifiedExportsService>> qualifiedExports = new HashMap<>();
-            var loader = ServiceLoader.load(ModuleQualifiedExportsService.class, ModuleQualifiedExportsService.class.getClassLoader());
+            var loader = IS_NATIVE_IMAGE
+                ? ServiceLoader.load(ModuleQualifiedExportsService.class)
+                : ServiceLoader.load(ModuleQualifiedExportsService.class, ModuleQualifiedExportsService.class.getClassLoader());
+            System.out.println("O or more loaders found");
             for (var exportsService : loader) {
+                System.out.println("found another laoder: " + exportsService.getClass().getName());
                 addExportsService(qualifiedExports, exportsService, exportsService.getClass().getModule().getName());
             }
             exportsServices = Map.copyOf(qualifiedExports);
@@ -102,6 +108,15 @@ public abstract class ModuleQualifiedExportsService {
 
     protected ModuleQualifiedExportsService(Module module) {
         this.module = module == null ? getClass().getModule() : module;
+        if (module == null) {
+            System.out.println("Module is null!!");
+        }
+        if (this.module == null) {
+            System.out.println("This Module is null!!");
+        }
+        if (this.module.getDescriptor() == null) {
+            System.out.println("Module Descriptor is null!! for module" + this.module.getName());
+        }
         this.qualifiedExports = invert(this.module.getDescriptor().exports(), Exports::isQualified, Exports::source, Exports::targets);
         this.qualifiedOpens = invert(this.module.getDescriptor().opens(), Opens::isQualified, Opens::source, Opens::targets);
         this.targets = Stream.concat(qualifiedExports.keySet().stream(), qualifiedOpens.keySet().stream())

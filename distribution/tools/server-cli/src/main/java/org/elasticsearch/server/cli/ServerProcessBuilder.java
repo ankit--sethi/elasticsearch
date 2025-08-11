@@ -41,8 +41,8 @@ import java.util.stream.Stream;
 public class ServerProcessBuilder {
     private Path tempDir;
     private ServerArgs serverArgs;
-    private ProcessInfo processInfo;
-    private List<String> jvmOptions;
+    protected ProcessInfo processInfo;
+    protected List<String> jvmOptions;
     private Terminal terminal;
 
     // this allows mocking the process building by tests
@@ -102,7 +102,7 @@ public class ServerProcessBuilder {
         return envVars;
     }
 
-    private List<String> getJvmArgs() {
+    protected List<String> getJvmArgs() {
         Path esHome = processInfo.workingDir();
         return List.of(
             "--module-path",
@@ -117,7 +117,7 @@ public class ServerProcessBuilder {
         );
     }
 
-    private String getCommand() {
+    protected String getCommand() {
         Path javaHome = PathUtils.get(processInfo.sysprops().get("java.home"));
 
         boolean isWindows = processInfo.sysprops().get("os.name").startsWith("Windows");
@@ -161,6 +161,7 @@ public class ServerProcessBuilder {
             sendArgs(serverArgs, jvmProcess.getOutputStream());
 
             boolean serverOk = errorPump.waitUntilReady();
+
             if (serverOk == false) {
                 // something bad happened, wait for the process to exit then rethrow
                 int exitCode = jvmProcess.waitFor();

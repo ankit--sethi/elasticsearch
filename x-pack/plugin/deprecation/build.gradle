@@ -14,5 +14,6 @@ addQaCheckDependencies(project)
 
 dependencies {
   compileOnly project(":x-pack:plugin:core")
+  compileOnly 'com.github.spotbugs:spotbugs-annotations:4.9.3'
 }
 

@@ -50,6 +50,7 @@ plugins {
   id 'elasticsearch.run-ccs'
   id 'elasticsearch.release-tools'
   id 'elasticsearch.versions'
+  id 'org.graalvm.buildtools.native' version '0.11.0'
 }
 
 /**

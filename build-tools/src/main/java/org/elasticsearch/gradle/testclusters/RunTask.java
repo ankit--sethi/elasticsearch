@@ -251,6 +251,12 @@ public abstract class RunTask extends DefaultTestClustersTask {
 
             }
         }
+        for (ElasticsearchCluster cluster : getClusters()) {
+            for (ElasticsearchNode node : cluster.getNodes()) {
+                getLogger().lifecycle("Running elasticsearch in debug mode, {} expecting running debug server on port {}", node, 9999);
+                // node.jvmArgs("-agentlib:native-image-agent=config-output-dir=/Users/ankitsethi/graalvm-es");
+            }
+        }
         if (debug) {
             enableDebug();
         }

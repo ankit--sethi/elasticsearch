@@ -46,7 +46,6 @@ import org.elasticsearch.monitor.jvm.HotThreads;
 import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.monitor.os.OsProbe;
 import org.elasticsearch.monitor.process.ProcessProbe;
-import org.elasticsearch.nativeaccess.NativeAccess;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeValidationException;
 import org.elasticsearch.plugins.PluginBundle;
@@ -78,7 +77,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.elasticsearch.bootstrap.BootstrapSettings.SECURITY_FILTER_BAD_DEFAULTS_SETTING;
-import static org.elasticsearch.nativeaccess.WindowsFunctions.ConsoleCtrlHandler.CTRL_CLOSE_EVENT;
 
 /**
  * This class starts elasticsearch.
@@ -470,7 +468,7 @@ class Elasticsearch {
      */
     static void initializeNatives(final Path tmpFile, final boolean mlockAll, final boolean systemCallFilter, final boolean ctrlHandler) {
         final Logger logger = LogManager.getLogger(Elasticsearch.class);
-        var nativeAccess = NativeAccess.instance();
+        /*var nativeAccess = NativeAccess.instance();
 
         // check if the user is running as root, and bail
         if (nativeAccess.definitelyRunningAsRoot()) {
@@ -478,33 +476,33 @@ class Elasticsearch {
         }
 
         if (systemCallFilter) {
-            /*
-             * Try to install system call filters; if they fail to install; a bootstrap check will fail startup in production mode.
-             *
-             * TODO: should we fail hard here if system call filters fail to install, or remain lenient in non-production environments?
-             */
-            nativeAccess.tryInstallExecSandbox();
-        }
-
-        // mlockall if requested
-        if (mlockAll) {
-            nativeAccess.tryLockMemory();
-        }
-
-        // listener for windows close event
-        if (ctrlHandler) {
-            var windowsFunctions = nativeAccess.getWindowsFunctions();
-            if (windowsFunctions != null) {
-                windowsFunctions.addConsoleCtrlHandler(code -> {
-                    if (CTRL_CLOSE_EVENT == code) {
-                        logger.info("running graceful exit on windows");
-                        shutdown();
-                        return true;
+            *//*
+                * Try to install system call filters; if they fail to install; a bootstrap check will fail startup in production mode.
+                *
+                * TODO: should we fail hard here if system call filters fail to install, or remain lenient in non-production environments?
+                *//*
+                    nativeAccess.tryInstallExecSandbox();
                     }
-                    return false;
-                });
-            }
-        }
+
+                    // mlockall if requested
+                    if (mlockAll) {
+                    nativeAccess.tryLockMemory();
+                    }
+
+                    // listener for windows close event
+                    if (ctrlHandler) {
+                    var windowsFunctions = nativeAccess.getWindowsFunctions();
+                    if (windowsFunctions != null) {
+                     windowsFunctions.addConsoleCtrlHandler(code -> {
+                         if (CTRL_CLOSE_EVENT == code) {
+                             logger.info("running graceful exit on windows");
+                             shutdown();
+                             return true;
+                         }
+                         return false;
+                     });
+                    }
+                    }*/
 
         // init lucene random seed. it will use /dev/urandom where available:
         StringHelper.randomId();

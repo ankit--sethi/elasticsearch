@@ -511,6 +511,7 @@ public class PluginsLoader {
     }
 
     private static void addServerExportsService(Map<String, List<ModuleQualifiedExportsService>> qualifiedExports) {
+        System.out.println("The serverModule is: " + serverModule.getName());
         var exportsService = new ModuleQualifiedExportsService(serverModule) {
             @Override
             protected void addExports(String pkg, Module target) {
@@ -527,6 +528,7 @@ public class PluginsLoader {
 
     private static void addPluginExportsServices(Map<String, List<ModuleQualifiedExportsService>> qualifiedExports, Controller controller) {
         for (Module module : controller.layer().modules()) {
+            System.out.println("The problematic module is" + module.getName());
             var exportsService = new ModuleQualifiedExportsService(module) {
                 @Override
                 protected void addExports(String pkg, Module target) {
