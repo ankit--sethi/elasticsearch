@@ -17,6 +17,7 @@ import java.lang.module.Configuration;
 import java.lang.module.ModuleFinder;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.Set;
@@ -37,6 +38,7 @@ import static org.elasticsearch.jdk.ModuleQualifiedExportsService.exposeQualifie
  */
 public final class ProviderLocator<T> implements Supplier<T> {
 
+    private static final boolean IS_NATIVE_IMAGE = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
     private final String providerName;
     private final Class<T> providerType;
     private final String providerModuleName;
@@ -100,7 +102,24 @@ public final class ProviderLocator<T> implements Supplier<T> {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private T load() throws IOException {
+        if (IS_NATIVE_IMAGE) {
+            System.out.println("I am trying to load this: " + providerType.toString());
+            ServiceLoader<T> serviceLoader = ServiceLoader.load(providerType);
+            Optional<T> firstProvider = serviceLoader.findFirst();
+            if (firstProvider.isPresent()) {
+                System.out.println(
+                    "Native Image: Found and instantiated XContentProvider via ServiceLoader: " + firstProvider.get().getClass().getName()
+                );
+                return firstProvider.get();
+            } else {
+                System.err.println(
+                    "Native Image: No XContentProvider implementation found via ServiceLoader. Ensure resource-config.json and module-info.java are correct."
+                );
+                return null; // Or throw an appropriate exception
+            }
+        }
         EmbeddedImplClassLoader loader = EmbeddedImplClassLoader.getInstance(parentLoader, providerName);
         if (loadAsProviderModule) {
             return loadAsModule(loader);

@@ -31,10 +31,16 @@ public class ConsoleLoader {
 
     private static final String CONSOLE_LOADER_CLASS = "org.elasticsearch.io.ansi.AnsiConsoleLoader";
 
+    private static final boolean IS_NATIVE_IMAGE = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+
     public static Console loadConsole(Environment env) {
-        final ClassLoader classLoader = buildClassLoader(env);
-        final Supplier<Console> supplier = buildConsoleLoader(classLoader);
-        return supplier.get();
+        if (IS_NATIVE_IMAGE == false) {
+            final ClassLoader classLoader = buildClassLoader(env);
+            final Supplier<Console> supplier = buildConsoleLoader(classLoader);
+            return supplier.get();
+        } else {
+            return buildConsoleLoaderNative().get();
+        }
     }
 
     public record Console(PrintStream printStream, Supplier<Integer> width, Boolean ansiEnabled, @Nullable Charset charset) {}
@@ -43,6 +49,18 @@ public class ConsoleLoader {
     static Supplier<Console> buildConsoleLoader(ClassLoader classLoader) {
         try {
             final Class<? extends Supplier<Console>> cls = (Class<? extends Supplier<Console>>) classLoader.loadClass(CONSOLE_LOADER_CLASS);
+            final Constructor<? extends Supplier<Console>> constructor = cls.getConstructor();
+            final Supplier<Console> supplier = constructor.newInstance();
+            return supplier;
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException("Failed to load ANSI console", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static Supplier<Console> buildConsoleLoaderNative() {
+        try {
+            final Class<? extends Supplier<Console>> cls = (Class<? extends Supplier<Console>>) Class.forName(CONSOLE_LOADER_CLASS);
             final Constructor<? extends Supplier<Console>> constructor = cls.getConstructor();
             final Supplier<Console> supplier = constructor.newInstance();
             return supplier;

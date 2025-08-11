@@ -17,6 +17,9 @@ base {
 
 dependencies {
   compileOnly project(path: xpackModule('core'))
+  //api "org.apache.logging.log4j:log4j-api:${versions.log4j}"
+  compileOnly 'com.google.errorprone:error_prone_annotations:2.41.0'
+  compileOnly 'com.github.spotbugs:spotbugs-annotations:4.9.3'
   api project(path: ':modules:transport-netty4')
 
   testImplementation project(path: xpackModule('ilm'))
