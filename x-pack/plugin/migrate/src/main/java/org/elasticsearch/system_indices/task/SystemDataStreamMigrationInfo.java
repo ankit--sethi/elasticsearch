@@ -9,7 +9,7 @@ package org.elasticsearch.system_indices.task;
 
 import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
-import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.indices.SystemDataStreamDescriptor;
 import org.elasticsearch.indices.SystemIndices;
 
@@ -55,7 +55,7 @@ final class SystemDataStreamMigrationInfo extends SystemResourceMigrationInfo {
     }
 
     @Override
-    Stream<IndexMetadata> getIndices(Metadata metadata) {
+    Stream<IndexMetadata> getIndices(ProjectMetadata metadata) {
         return Stream.concat(dataStream.getIndices().stream(), dataStream.getFailureIndices().stream()).map(metadata::getIndexSafe);
     }
 

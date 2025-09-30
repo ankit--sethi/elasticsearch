@@ -7,13 +7,17 @@
 package org.elasticsearch.xpack.esql.core.type;
 
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.util.FeatureFlag;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.mapper.SourceFieldMapper;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 import org.elasticsearch.xpack.esql.core.plugin.EsqlCorePlugin;
+import org.elasticsearch.xpack.esql.core.util.PlanStreamInput;
+import org.elasticsearch.xpack.esql.core.util.PlanStreamOutput;
 
 import java.io.IOException;
 import java.math.BigInteger;
@@ -22,15 +26,15 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
 import static java.util.stream.Collectors.toMap;
-import static org.elasticsearch.xpack.esql.core.util.PlanStreamInput.readCachedStringWithVersionCheck;
-import static org.elasticsearch.xpack.esql.core.util.PlanStreamOutput.writeCachedStringWithVersionCheck;
+import static org.elasticsearch.TransportVersions.INFERENCE_REQUEST_ADAPTIVE_RATE_LIMITING;
 
 /**
  * This enum represents data types the ES|QL query processing layer is able to
@@ -139,12 +143,12 @@ import static org.elasticsearch.xpack.esql.core.util.PlanStreamOutput.writeCache
  *         unsupported types.</li>
  * </ul>
  */
-public enum DataType {
+public enum DataType implements Writeable {
     /**
      * Fields of this type are unsupported by any functions and are always
      * rendered as {@code null} in the response.
      */
-    UNSUPPORTED(builder().typeName("UNSUPPORTED").unknownSize()),
+    UNSUPPORTED(builder().typeName("UNSUPPORTED").estimatedSize(1024)),
     /**
      * Fields that are always {@code null}, usually created with constant
      * {@code null} values.
@@ -237,7 +241,7 @@ public enum DataType {
      * Generally ESQL uses {@code keyword} fields as raw strings. So things like
      * {@code TO_STRING} will make a {@code keyword} field.
      */
-    KEYWORD(builder().esType("keyword").unknownSize().docValues()),
+    KEYWORD(builder().esType("keyword").estimatedSize(50).docValues()),
     /**
      * String fields that are analyzed when the document is received and may be
      * cut into more than one token. Generally ESQL only sees {@code text} fields
@@ -245,7 +249,7 @@ public enum DataType {
      * <strong>without</strong> analysis. The {@code MATCH} operator can be used
      * to query these fields with analysis.
      */
-    TEXT(builder().esType("text").unknownSize()),
+    TEXT(builder().esType("text").estimatedSize(1024)),
     /**
      * Millisecond precision date, stored as a 64-bit signed number.
      */
@@ -266,8 +270,8 @@ public enum DataType {
      */
     // 8.15.2-SNAPSHOT is 15 bytes, most are shorter, some can be longer
     VERSION(builder().esType("version").estimatedSize(15).docValues()),
-    OBJECT(builder().esType("object").unknownSize()),
-    SOURCE(builder().esType(SourceFieldMapper.NAME).unknownSize()),
+    OBJECT(builder().esType("object").estimatedSize(1024)),
+    SOURCE(builder().esType(SourceFieldMapper.NAME).estimatedSize(10 * 1024)),
     DATE_PERIOD(builder().typeName("DATE_PERIOD").estimatedSize(3 * Integer.BYTES)),
     TIME_DURATION(builder().typeName("TIME_DURATION").estimatedSize(Integer.BYTES + Long.BYTES)),
     // WKB for points is typically 21 bytes.
@@ -276,6 +280,9 @@ public enum DataType {
     // wild estimate for size, based on some test data (airport_city_boundaries)
     CARTESIAN_SHAPE(builder().esType("cartesian_shape").estimatedSize(200).docValues()),
     GEO_SHAPE(builder().esType("geo_shape").estimatedSize(200).docValues()),
+    GEOHASH(builder().esType("geohash").typeName("GEOHASH").estimatedSize(Long.BYTES)),
+    GEOTILE(builder().esType("geotile").typeName("GEOTILE").estimatedSize(Long.BYTES)),
+    GEOHEX(builder().esType("geohex").typeName("GEOHEX").estimatedSize(Long.BYTES)),
 
     /**
      * Fields with this type represent a Lucene doc id. This field is a bit magic in that:
@@ -294,31 +301,48 @@ public enum DataType {
      * Every document in {@link IndexMode#TIME_SERIES} index will have a single value
      * for this field and the segments themselves are sorted on this value.
      */
-    TSID_DATA_TYPE(builder().esType("_tsid").unknownSize().docValues()),
+    TSID_DATA_TYPE(builder().esType("_tsid").estimatedSize(Long.BYTES * 2).docValues()),
     /**
      * Fields with this type are the partial result of running a non-time-series aggregation
      * inside alongside time-series aggregations. These fields are not parsable from the
      * mapping and should be hidden from users.
      */
-    PARTIAL_AGG(builder().esType("partial_agg").unknownSize()),
+    PARTIAL_AGG(builder().esType("partial_agg").estimatedSize(1024)),
+
+    AGGREGATE_METRIC_DOUBLE(
+        builder().esType("aggregate_metric_double")
+            .estimatedSize(Double.BYTES * 3 + Integer.BYTES)
+            .createdVersion(
+                // Version created just *after* we committed support for aggregate_metric_double
+                INFERENCE_REQUEST_ADAPTIVE_RATE_LIMITING
+            )
+    ),
+
     /**
-     * String fields that are split into chunks, where each chunk has attached embeddings
-     * used for semantic search. Generally ESQL only sees {@code semantic_text} fields when
-     * loaded from the index and ESQL will load these fields as strings without their attached
-     * chunks or embeddings.
+     * Fields with this type are dense vectors, represented as an array of double values.
      */
-    SEMANTIC_TEXT(builder().esType("semantic_text").unknownSize()),
-
-    AGGREGATE_METRIC_DOUBLE(builder().esType("aggregate_metric_double").estimatedSize(Double.BYTES * 3 + Integer.BYTES));
+    DENSE_VECTOR(
+        builder().esType("dense_vector").estimatedSize(4096).createdVersion(DataTypesTransportVersions.ESQL_DENSE_VECTOR_CREATED_VERSION)
+    );
 
     /**
-     * Types that are actively being built. These types are not returned
-     * from Elasticsearch if their associated {@link FeatureFlag} is disabled.
-     * They aren't included in generated documentation. And the tests don't
-     * check that sending them to a function produces a sane error message.
+     * Types that are actively being built. These types are
+     * <ul>
+     *     <li>Not returned from Elasticsearch if their associated {@link FeatureFlag} is disabled.</li>
+     *     <li>Not included in generated documentation</li>
+     *     <li>
+     *         Not tested by {@code ErrorsForCasesWithoutExamplesTestCase} subclasses.
+     *         When a function supports a type it includes a test case in its subclass
+     *         of {@code AbstractFunctionTestCase}. If a function does not support.
+     *         them like {@code TO_STRING} then the tests won't notice. See class javadoc
+     *         for instructions on adding new types, but that usually involves adding support
+     *         for that type to a handful of functions. Once you've done that you should be
+     *         able to remove your new type from UNDER_CONSTRUCTION and update a few error
+     *         messages.
+     *     </li>
+     * </ul>
      */
     public static final Map<DataType, FeatureFlag> UNDER_CONSTRUCTION = Map.ofEntries(
-        Map.entry(SEMANTIC_TEXT, EsqlCorePlugin.SEMANTIC_TEXT_FEATURE_FLAG),
         Map.entry(AGGREGATE_METRIC_DOUBLE, EsqlCorePlugin.AGGREGATE_METRIC_DOUBLE_FEATURE_FLAG)
     );
 
@@ -328,7 +352,7 @@ public enum DataType {
 
     private final String esType;
 
-    private final Optional<Integer> estimatedSize;
+    private final int estimatedSize;
 
     /**
      * True if the type represents a "whole number", as in, does <strong>not</strong> have a decimal part.
@@ -362,23 +386,28 @@ public enum DataType {
      */
     private final DataType counter;
 
+    /**
+     * Version that first created this data type.
+     */
+    private final CreatedVersion createdVersion;
+
     DataType(Builder builder) {
         String typeString = builder.typeName != null ? builder.typeName : builder.esType;
-        assert builder.estimatedSize != null : "Missing size for type " + typeString;
         this.typeName = typeString.toLowerCase(Locale.ROOT);
         this.name = typeString.toUpperCase(Locale.ROOT);
         this.esType = builder.esType;
-        this.estimatedSize = builder.estimatedSize;
+        this.estimatedSize = Objects.requireNonNull(builder.estimatedSize, "estimated size is required");
         this.isWholeNumber = builder.isWholeNumber;
         this.isRationalNumber = builder.isRationalNumber;
         this.docValues = builder.docValues;
         this.isCounter = builder.isCounter;
         this.widenSmallNumeric = builder.widenSmallNumeric;
         this.counter = builder.counter;
+        this.createdVersion = builder.createdVersion;
     }
 
     private static final Collection<DataType> TYPES = Arrays.stream(values())
-        .filter(d -> d != DOC_DATA_TYPE && d != TSID_DATA_TYPE)
+        .filter(d -> d != DOC_DATA_TYPE)
         .sorted(Comparator.comparing(DataType::typeName))
         .toList();
 
@@ -394,6 +423,9 @@ public enum DataType {
         // ES calls this 'point', but ESQL calls it 'cartesian_point'
         map.put("point", DataType.CARTESIAN_POINT);
         map.put("shape", DataType.CARTESIAN_SHAPE);
+        // semantic_text is returned as text by field_caps, but unit tests will retrieve it from the mapping
+        // so we need to map it here as well
+        map.put("semantic_text", DataType.TEXT);
         ES_TO_TYPE = Collections.unmodifiableMap(map);
         // DATETIME has different esType and typeName, add an entry in NAME_TO_TYPE with date as key
         map = TYPES.stream().collect(toMap(DataType::typeName, t -> t));
@@ -407,6 +439,7 @@ public enum DataType {
         map.put("bool", BOOLEAN);
         map.put("int", INTEGER);
         map.put("string", KEYWORD);
+        map.put("date", DataType.DATETIME);
         NAME_OR_ALIAS_TO_TYPE = Collections.unmodifiableMap(map);
     }
 
@@ -440,41 +473,51 @@ public enum DataType {
     }
 
     public static DataType fromJava(Object value) {
-        if (value == null) {
-            return NULL;
-        }
-        if (value instanceof Integer) {
-            return INTEGER;
-        }
-        if (value instanceof Long) {
-            return LONG;
-        }
-        if (value instanceof BigInteger) {
-            return UNSIGNED_LONG;
-        }
-        if (value instanceof Boolean) {
-            return BOOLEAN;
-        }
-        if (value instanceof Double) {
-            return DOUBLE;
-        }
-        if (value instanceof Float) {
-            return FLOAT;
-        }
-        if (value instanceof Byte) {
-            return BYTE;
-        }
-        if (value instanceof Short) {
-            return SHORT;
-        }
-        if (value instanceof ZonedDateTime) {
-            return DATETIME;
-        }
-        if (value instanceof String || value instanceof Character || value instanceof BytesRef) {
-            return KEYWORD;
+        switch (value) {
+            case null -> {
+                return NULL;
+            }
+            case Integer i -> {
+                return INTEGER;
+            }
+            case Long l -> {
+                return LONG;
+            }
+            case BigInteger bigInteger -> {
+                return UNSIGNED_LONG;
+            }
+            case Boolean b -> {
+                return BOOLEAN;
+            }
+            case Double v -> {
+                return DOUBLE;
+            }
+            case Float v -> {
+                return FLOAT;
+            }
+            case Byte b -> {
+                return BYTE;
+            }
+            case Short i -> {
+                return SHORT;
+            }
+            case ZonedDateTime zonedDateTime -> {
+                return DATETIME;
+            }
+            case List<?> list -> {
+                if (list.isEmpty()) {
+                    return null;
+                }
+                return fromJava(list.getFirst());
+            }
+            default -> {
+                if (value instanceof String || value instanceof Character || value instanceof BytesRef) {
+                    return KEYWORD;
+                }
+                return null;
+            }
         }
 
-        return null;
     }
 
     public static boolean isUnsupported(DataType from) {
@@ -482,7 +525,7 @@ public enum DataType {
     }
 
     public static boolean isString(DataType t) {
-        return t == KEYWORD || t == TEXT || t == SEMANTIC_TEXT;
+        return t == KEYWORD || t == TEXT;
     }
 
     public static boolean isPrimitiveAndSupported(DataType t) {
@@ -503,6 +546,14 @@ public enum DataType {
 
     public static boolean isDateTime(DataType type) {
         return type == DATETIME;
+    }
+
+    public static boolean isTimeDuration(DataType t) {
+        return t == TIME_DURATION;
+    }
+
+    public static boolean isDateNanos(DataType t) {
+        return t == DATE_NANOS;
     }
 
     public static boolean isNullOrTimeDuration(DataType t) {
@@ -556,7 +607,6 @@ public enum DataType {
             && t != SOURCE
             && t != HALF_FLOAT
             && t != PARTIAL_AGG
-            && t != AGGREGATE_METRIC_DOUBLE
             && t.isCounter() == false;
     }
 
@@ -565,19 +615,39 @@ public enum DataType {
     }
 
     public static boolean isSpatialPoint(DataType t) {
-        return t == GEO_POINT || t == CARTESIAN_POINT;
+        return isGeoPoint(t) || isCartesianPoint(t);
+    }
+
+    public static boolean isGeoPoint(DataType t) {
+        return t == GEO_POINT;
+    }
+
+    public static boolean isCartesianPoint(DataType t) {
+        return t == CARTESIAN_POINT;
+    }
+
+    public static boolean isSpatialShape(DataType t) {
+        return t == GEO_SHAPE || t == CARTESIAN_SHAPE || t == GEOHASH || t == GEOTILE || t == GEOHEX;
     }
 
     public static boolean isSpatialGeo(DataType t) {
-        return t == GEO_POINT || t == GEO_SHAPE;
+        return t == GEO_POINT || t == GEO_SHAPE || t == GEOHASH || t == GEOTILE || t == GEOHEX;
     }
 
     public static boolean isSpatial(DataType t) {
         return t == GEO_POINT || t == CARTESIAN_POINT || t == GEO_SHAPE || t == CARTESIAN_SHAPE;
     }
 
+    public static boolean isSpatialOrGrid(DataType t) {
+        return isSpatial(t) || isGeoGrid(t);
+    }
+
+    public static boolean isGeoGrid(DataType t) {
+        return t == GEOHASH || t == GEOTILE || t == GEOHEX;
+    }
+
     public static boolean isSortable(DataType t) {
-        return false == (t == SOURCE || isCounter(t) || isSpatial(t));
+        return false == (t == SOURCE || isCounter(t) || isSpatialOrGrid(t) || t == AGGREGATE_METRIC_DOUBLE);
     }
 
     public String nameUpper() {
@@ -629,10 +699,21 @@ public enum DataType {
     }
 
     /**
-     * @return the estimated size, in bytes, of this data type.  If there's no reasonable way to estimate the size,
-     *         the optional will be empty.
+     * An estimate of the size of values of this type in a Block. All types must have an
+     * estimate, and generally follow the following rules:
+     * <ol>
+     *     <li>
+     *         If you know the precise size of a single element of this type, use that.
+     *         For example {@link #INTEGER} uses {@link Integer#BYTES}.
+     *     </li>
+     *     <li>
+     *         Overestimates are better than under-estimates. Over-estimates make less
+     *         efficient operations, but under-estimates make circuit breaker errors.
+     *     </li>
+     * </ol>
+     * @return the estimated size of this data type in bytes
      */
-    public Optional<Integer> estimatedSize() {
+    public int estimatedSize() {
         return estimatedSize;
     }
 
@@ -663,13 +744,25 @@ public enum DataType {
         return counter;
     }
 
+    @Override
     public void writeTo(StreamOutput out) throws IOException {
-        writeCachedStringWithVersionCheck(out, typeName);
+        if (createdVersion.supports(out.getTransportVersion()) == false) {
+            /*
+             * TODO when we implement version aware planning flip this to an IllegalStateException
+             * so we throw a 500 error. It'll be our bug then. Right now it's a sign that the user
+             * tried to do something like `KNN(dense_vector_field, [1, 2])` against an old node.
+             * Like, during the rolling upgrade that enables KNN or to a remote cluster that has
+             * not yet been upgraded.
+             */
+            throw new IllegalArgumentException(
+                "remote node at version [" + out.getTransportVersion() + "] doesn't understand data type [" + this + "]"
+            );
+        }
+        ((PlanStreamOutput) out).writeCachedString(typeName);
     }
 
     public static DataType readFrom(StreamInput in) throws IOException {
-        // TODO: Use our normal enum serialization pattern
-        return readFrom(readCachedStringWithVersionCheck(in));
+        return readFrom(((PlanStreamInput) in).readCachedString());
     }
 
     /**
@@ -716,6 +809,33 @@ public enum DataType {
         };
     }
 
+    public CreatedVersion createdVersion() {
+        return createdVersion;
+    }
+
+    public static DataType suggestedCast(Set<DataType> originalTypes) {
+        if (originalTypes.isEmpty() || originalTypes.contains(UNSUPPORTED)) {
+            return null;
+        }
+        if (originalTypes.contains(DATE_NANOS) && originalTypes.contains(DATETIME) && originalTypes.size() == 2) {
+            return DATE_NANOS;
+        }
+        if (originalTypes.contains(AGGREGATE_METRIC_DOUBLE)) {
+            boolean allNumeric = true;
+            for (DataType type : originalTypes) {
+                if (type.isNumeric() == false && type != AGGREGATE_METRIC_DOUBLE) {
+                    allNumeric = false;
+                    break;
+                }
+            }
+            if (allNumeric) {
+                return AGGREGATE_METRIC_DOUBLE;
+            }
+        }
+
+        return KEYWORD;
+    }
+
     /**
      * Named parameters with default values. It's just easier to do this with
      * a builder in java....
@@ -725,7 +845,7 @@ public enum DataType {
 
         private String typeName;
 
-        private Optional<Integer> estimatedSize;
+        private Integer estimatedSize;
 
         /**
          * True if the type represents a "whole number", as in, does <strong>not</strong> have a decimal part.
@@ -760,6 +880,13 @@ public enum DataType {
          */
         private DataType counter;
 
+        /**
+         * The version when this data type was created. We default to the first
+         * version for which we maintain wire compatibility, which is pretty
+         * much {@code 8.18.0}.
+         */
+        private CreatedVersion createdVersion = CreatedVersion.SUPPORTED_ON_ALL_NODES;
+
         Builder() {}
 
         Builder esType(String esType) {
@@ -772,13 +899,11 @@ public enum DataType {
             return this;
         }
 
+        /**
+         * See {@link DataType#estimatedSize}.
+         */
         Builder estimatedSize(int size) {
-            this.estimatedSize = Optional.of(size);
-            return this;
-        }
-
-        Builder unknownSize() {
-            this.estimatedSize = Optional.empty();
+            this.estimatedSize = size;
             return this;
         }
 
@@ -817,5 +942,16 @@ public enum DataType {
             this.counter = counter;
             return this;
         }
+
+        Builder createdVersion(TransportVersion createdVersion) {
+            this.createdVersion = CreatedVersion.supportedOn(createdVersion);
+            return this;
+        }
+    }
+
+    private static class DataTypesTransportVersions {
+        public static final TransportVersion ESQL_DENSE_VECTOR_CREATED_VERSION = TransportVersion.fromName(
+            "esql_dense_vector_created_version"
+        );
     }
 }

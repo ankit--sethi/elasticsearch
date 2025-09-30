@@ -29,8 +29,9 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexTemplateMetadata;
-import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.metadata.MetadataIndexTemplateService;
+import org.elasticsearch.cluster.metadata.ProjectId;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.IndexScopedSettings;
@@ -87,6 +88,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
     private final SystemIndices systemIndices;
     private final IndexScopedSettings indexScopedSettings;
     private final ThreadPool threadPool;
+    private final ProjectId projectId;
 
     // In-memory state
     // NOTE: This queue is not a thread-safe class. Use `synchronized (migrationQueue)` whenever you access this. I chose this rather than
@@ -105,9 +107,11 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
         ClusterService clusterService,
         SystemIndices systemIndices,
         IndexScopedSettings indexScopedSettings,
-        ThreadPool threadPool
+        ThreadPool threadPool,
+        ProjectId projectId
     ) {
         super(id, type, action, "system-index-migrator", parentTask, headers);
+        this.projectId = projectId;
         this.baseClient = new ParentTaskAssigningClient(client, parentTask);
         this.clusterService = clusterService;
         this.systemIndices = systemIndices;
@@ -116,7 +120,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
     }
 
     public void run(SystemIndexMigrationTaskState taskState) {
-        ClusterState clusterState = clusterService.state();
+        ProjectMetadata projectMetadata = clusterService.state().metadata().getProject(projectId);
 
         final String stateIndexName;
         final String stateFeatureName;
@@ -136,7 +140,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
                 return;
             }
 
-            if (stateIndexName != null && clusterState.metadata().hasIndexAbstraction(stateIndexName) == false) {
+            if (stateIndexName != null && projectMetadata.hasIndexAbstraction(stateIndexName) == false) {
                 markAsFailed(new IndexNotFoundException(stateIndexName, "cannot migrate because that index does not exist"));
                 return;
             }
@@ -154,8 +158,8 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
 
             systemIndices.getFeatures()
                 .stream()
-                .flatMap(feature -> SystemResourceMigrationFactory.fromFeature(feature, clusterState.metadata(), indexScopedSettings))
-                .filter(migrationInfo -> needToBeMigrated(migrationInfo.getIndices(clusterState.metadata())))
+                .flatMap(feature -> SystemResourceMigrationFactory.fromFeature(feature, projectMetadata, indexScopedSettings))
+                .filter(migrationInfo -> needToBeMigrated(migrationInfo.getIndices(projectMetadata)))
                 .sorted() // Stable order between nodes
                 .collect(Collectors.toCollection(() -> migrationQueue));
 
@@ -188,12 +192,12 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
                         + nextMigrationInfo.getFeatureName()
                         + "] of locally computed queue, see logs";
                 if (nextMigrationInfo.getCurrentResourceName().equals(stateIndexName) == false) {
-                    if (clusterState.metadata().hasIndexAbstraction(stateIndexName) == false) {
+                    if (projectMetadata.hasIndexAbstraction(stateIndexName) == false) {
                         // If we don't have that index at all, and also don't have the next one
                         markAsFailed(
                             new IllegalStateException(
                                 format(
-                                    "failed to resume system index migration from resource [%s], that is not present in the cluster",
+                                    "failed to resume system resource migration from resource [%s], that is not present in the cluster",
                                     stateIndexName
                                 )
                             )
@@ -201,7 +205,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
                     }
                     logger.warn(
                         () -> format(
-                            "resuming system index migration with resource [%s],"
+                            "resuming system resource migration with resource [%s],"
                                 + " which does not match resource given in last task state [%s]",
                             nextMigrationInfo.getCurrentResourceName(),
                             stateIndexName
@@ -213,7 +217,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
 
         // Kick off our callback "loop" - finishIndexAndLoop calls back into startFeatureMigration
         logger.debug("cleaning up previous migration, task state: [{}]", taskState == null ? "null" : Strings.toString(taskState));
-        clearResults(clusterService, ActionListener.wrap(state -> startFeatureMigration(stateFeatureName), this::markAsFailed));
+        clearResults(ActionListener.wrap(state -> startFeatureMigration(stateFeatureName), this::markAsFailed));
     }
 
     private void finishIndexAndLoop(SystemIndexMigrationInfo migrationInfo, BulkByScrollResponse bulkResponse) {
@@ -250,29 +254,23 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
         SystemResourceMigrationInfo nextMigrationInfo = currentMigrationInfo();
         if (nextMigrationInfo == null || nextMigrationInfo.getFeatureName().equals(lastMigrationInfo.getFeatureName()) == false) {
             // The next feature name is different than the last one, so we just finished a feature - time to invoke its post-migration hook
-            lastMigrationInfo.indicesMigrationComplete(
-                currentFeatureCallbackMetadata.get(),
-                clusterService,
-                baseClient,
-                ActionListener.wrap(successful -> {
-                    if (successful == false) {
-                        // GWB> Should we actually fail in this case instead of plugging along?
-                        logger.warn(
-                            "post-migration hook for feature [{}] indicated failure;"
-                                + " feature migration metadata prior to failure was [{}]",
-                            lastMigrationInfo.getFeatureName(),
-                            currentFeatureCallbackMetadata.get()
-                        );
-                    }
-                    recordIndexMigrationSuccess(lastMigrationInfo);
-                }, this::markAsFailed)
-            );
+            lastMigrationInfo.indicesMigrationComplete(currentFeatureCallbackMetadata.get(), baseClient, ActionListener.wrap(successful -> {
+                if (successful == false) {
+                    // GWB> Should we actually fail in this case instead of plugging along?
+                    logger.warn(
+                        "post-migration hook for feature [{}] indicated failure;" + " feature migration metadata prior to failure was [{}]",
+                        lastMigrationInfo.getFeatureName(),
+                        currentFeatureCallbackMetadata.get()
+                    );
+                }
+                recordIndexMigrationSuccess(lastMigrationInfo);
+            }, this::markAsFailed));
         } else {
             startFeatureMigration(lastMigrationInfo.getFeatureName());
         }
     }
 
-    private void migrateResource(SystemResourceMigrationInfo migrationInfo, ClusterState clusterState) {
+    private void migrateResource(SystemResourceMigrationInfo migrationInfo, ProjectMetadata project) {
         if (migrationInfo instanceof SystemIndexMigrationInfo systemIndexMigrationInfo) {
             logger.info(
                 "preparing to migrate old index [{}] from feature [{}] to new index [{}]",
@@ -280,7 +278,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
                 migrationInfo.getFeatureName(),
                 systemIndexMigrationInfo.getNextIndexName()
             );
-            migrateSingleIndex(systemIndexMigrationInfo, clusterState, this::finishIndexAndLoop);
+            migrateSingleIndex(systemIndexMigrationInfo, project, this::finishIndexAndLoop);
         } else if (migrationInfo instanceof SystemDataStreamMigrationInfo systemDataStreamMigrationInfo) {
             logger.info(
                 "preparing to migrate old indices from data stream [{}] from feature [{}] to new indices",
@@ -296,6 +294,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
     private void recordIndexMigrationSuccess(SystemResourceMigrationInfo lastMigrationInfo) {
         MigrationResultsUpdateTask updateTask = MigrationResultsUpdateTask.upsert(
             lastMigrationInfo.getFeatureName(),
+            projectId,
             SingleFeatureMigrationResult.success(),
             ActionListener.wrap(state -> {
                 startFeatureMigration(lastMigrationInfo.getFeatureName());
@@ -318,17 +317,22 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
         assert migrationInfo != null : "the queue of indices to migrate should have been checked for emptiness before calling this method";
         if (migrationInfo.getFeatureName().equals(lastFeatureName) == false) {
             // And then invoke the pre-migration hook for the next one.
-            migrationInfo.prepareForIndicesMigration(clusterService, baseClient, ActionListener.wrap(newMetadata -> {
+            final var project = clusterService.state().metadata().getProject(projectId);
+            migrationInfo.prepareForIndicesMigration(project, baseClient, ActionListener.wrap(newMetadata -> {
                 currentFeatureCallbackMetadata.set(newMetadata);
-                updateTaskState(migrationInfo, state -> migrateResource(migrationInfo, state), newMetadata);
+                updateTaskState(migrationInfo, newProject -> migrateResource(migrationInfo, newProject), newMetadata);
             }, this::markAsFailed));
         } else {
             // Otherwise, just re-use what we already have.
-            updateTaskState(migrationInfo, state -> migrateResource(migrationInfo, state), currentFeatureCallbackMetadata.get());
+            updateTaskState(migrationInfo, newProject -> migrateResource(migrationInfo, newProject), currentFeatureCallbackMetadata.get());
         }
     }
 
-    private void updateTaskState(SystemResourceMigrationInfo migrationInfo, Consumer<ClusterState> listener, Map<String, Object> metadata) {
+    private void updateTaskState(
+        SystemResourceMigrationInfo migrationInfo,
+        Consumer<ProjectMetadata> listener,
+        Map<String, Object> metadata
+    ) {
         final SystemIndexMigrationTaskState newTaskState = new SystemIndexMigrationTaskState(
             migrationInfo.getCurrentResourceName(),
             migrationInfo.getFeatureName(),
@@ -336,10 +340,10 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
         );
         logger.debug("updating task state to [{}]", Strings.toString(newTaskState));
         currentFeatureCallbackMetadata.set(metadata);
-        updatePersistentTaskState(newTaskState, ActionListener.wrap(task -> {
+        updateProjectPersistentTaskState(projectId, newTaskState, ActionListener.wrap(task -> {
             assert newTaskState.equals(task.getState()) : "task state returned by update method did not match submitted task state";
             logger.debug("new task state [{}] accepted", Strings.toString(newTaskState));
-            listener.accept(clusterService.state());
+            listener.accept(clusterService.state().metadata().getProject(projectId));
         }, this::markAsFailed));
     }
 
@@ -355,11 +359,11 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
 
     private void migrateSingleIndex(
         SystemIndexMigrationInfo migrationInfo,
-        ClusterState clusterState,
+        ProjectMetadata projectMetadata,
         BiConsumer<SystemIndexMigrationInfo, BulkByScrollResponse> listener
     ) {
         String oldIndexName = migrationInfo.getCurrentIndexName();
-        final IndexMetadata imd = clusterState.metadata().index(oldIndexName);
+        final IndexMetadata imd = projectMetadata.index(oldIndexName);
         if (imd.getState().equals(CLOSE)) {
             logger.error(
                 "unable to migrate index [{}] from feature [{}] because it is closed",
@@ -376,7 +380,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
          * This should be on for all System indices except for .kibana_ indices. See allowsTemplates in KibanaPlugin.java for more info.
          */
         if (migrationInfo.allowsTemplates() == false) {
-            final String v2template = MetadataIndexTemplateService.findV2Template(clusterState.metadata(), newIndexName, false);
+            final String v2template = MetadataIndexTemplateService.findV2Template(projectMetadata, newIndexName, false);
             if (Objects.nonNull(v2template)) {
                 logger.error(
                     "unable to create new index [{}] from feature [{}] because it would match composable template [{}]",
@@ -392,7 +396,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
                 return;
             }
             final List<IndexTemplateMetadata> v1templates = MetadataIndexTemplateService.findV1Templates(
-                clusterState.metadata(),
+                projectMetadata,
                 newIndexName,
                 false
             );
@@ -559,12 +563,15 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
     }
 
     private void setAliasAndRemoveOldIndex(SystemIndexMigrationInfo migrationInfo, ActionListener<IndicesAliasesResponse> listener) {
-        final IndicesAliasesRequestBuilder aliasesRequest = migrationInfo.createClient(baseClient).admin().indices().prepareAliases();
+        final IndicesAliasesRequestBuilder aliasesRequest = migrationInfo.createClient(baseClient)
+            .admin()
+            .indices()
+            .prepareAliases(TimeValue.THIRTY_SECONDS, TimeValue.THIRTY_SECONDS); // TODO should these be longer?
         aliasesRequest.removeIndex(migrationInfo.getCurrentIndexName());
         aliasesRequest.addAlias(migrationInfo.getNextIndexName(), migrationInfo.getCurrentIndexName());
 
         // Copy all the aliases from the old index
-        IndexMetadata imd = clusterService.state().metadata().index(migrationInfo.getCurrentIndexName());
+        IndexMetadata imd = clusterService.state().metadata().getProject(projectId).index(migrationInfo.getCurrentIndexName());
         imd.getAliases().values().forEach(aliasToAdd -> {
             aliasesRequest.addAliasAction(
                 IndicesAliasesRequest.AliasActions.add()
@@ -840,6 +847,7 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
 
         MigrationResultsUpdateTask.upsert(
             featureName,
+            projectId,
             SingleFeatureMigrationResult.failure(indexName, e),
             ActionListener.wrap(state -> super.markAsFailed(e), exception -> super.markAsFailed(e))
         ).submit(clusterService);
@@ -848,16 +856,16 @@ public class SystemIndexMigrator extends AllocatedPersistentTask {
 
     /**
      * Creates a task that will clear the results of previous migration attempts.
-     * @param clusterService The cluster service.
      * @param listener A listener that will be called upon successfully updating the cluster state.
      */
-    private static void clearResults(ClusterService clusterService, ActionListener<ClusterState> listener) {
+    private void clearResults(ActionListener<ClusterState> listener) {
         submitUnbatchedTask(clusterService, "clear migration results", new ClusterStateUpdateTask() {
             @Override
             public ClusterState execute(ClusterState currentState) throws Exception {
-                if (currentState.metadata().custom(FeatureMigrationResults.TYPE) != null) {
+                final var project = currentState.metadata().getProject(projectId);
+                if (project.custom(FeatureMigrationResults.TYPE) != null) {
                     return ClusterState.builder(currentState)
-                        .metadata(Metadata.builder(currentState.metadata()).removeCustom(FeatureMigrationResults.TYPE))
+                        .putProjectMetadata(ProjectMetadata.builder(project).removeCustom(FeatureMigrationResults.TYPE))
                         .build();
                 }
                 return currentState;

@@ -8,11 +8,9 @@
 package org.elasticsearch.xpack.esql.action;
 
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
-import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.compute.operator.DriverStatus;
-import org.elasticsearch.compute.operator.DriverTaskRunner;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.tasks.TaskInfo;
 import org.elasticsearch.xcontent.json.JsonXContent;
@@ -32,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.xpack.esql.EsqlTestUtils.getValuesList;
+import static org.elasticsearch.xpack.esql.action.AbstractCrossClusterTestCase.getDriverTasks;
 import static org.elasticsearch.xpack.esql.action.EsqlAsyncTestUtils.deleteAsyncId;
 import static org.elasticsearch.xpack.esql.action.EsqlAsyncTestUtils.startAsyncQuery;
 import static org.elasticsearch.xpack.esql.action.EsqlAsyncTestUtils.waitForCluster;
@@ -118,7 +117,7 @@ public class CrossClusterAsyncEnrichStopIT extends AbstractEnrichBasedCrossClust
         SimplePauseFieldPlugin.allowEmitting.countDown();
 
         try (EsqlQueryResponse resp = stopAction.actionGet(30, TimeUnit.SECONDS)) {
-            // Compare this to CrossClustersEnrichIT.testEnrichTwiceThenAggs - the results from c2 will be absent
+            // Compare this to CrossClusterEnrichIT.testEnrichTwiceThenAggs - the results from c2 will be absent
             // because we stopped it before processing the data
             assertThat(
                 getValuesList(resp),
@@ -175,9 +174,5 @@ public class CrossClusterAsyncEnrichStopIT extends AbstractEnrichBasedCrossClust
             client.prepareIndex("events").setSource("timestamp", e.timestamp, "user", e.user, "host", e.host, "const", "1").get();
         }
         client.admin().indices().prepareRefresh("events").get();
-    }
-
-    static List<TaskInfo> getDriverTasks(Client client) {
-        return client.admin().cluster().prepareListTasks().setActions(DriverTaskRunner.ACTION_NAME).setDetailed(true).get().getTasks();
     }
 }

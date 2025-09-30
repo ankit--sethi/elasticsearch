@@ -80,7 +80,7 @@ You can use a variety of official plugins that are compatible with your version 
 
 #### Before you begin [ec_before_you_begin_6]
 
-Some restrictions apply when adding plugins. To learn more, check [Restrictions for {{es}} and {{kib}} plugins](cloud://docs/release-notes/cloud-hosted/known-issues.md#ec-restrictions-plugins).
+Some restrictions apply when adding plugins. To learn more, check [Restrictions for {{es}} and {{kib}} plugins](cloud://release-notes/cloud-hosted/known-issues.md#ec-restrictions-plugins).
 
 Only Gold, Platinum, Enterprise and Private subscriptions have access to uploading custom plugins. All subscription levels, including Standard, can upload scripts and dictionaries.
 
@@ -106,7 +106,7 @@ Use the `elasticsearch-plugin` command line tool to install, list, and remove pl
 
 Run the following command to get usage instructions:
 
-``` 
+```
 sudo bin/elasticsearch-plugin -h
 ```
 
@@ -116,7 +116,7 @@ If Elasticsearch was installed using the deb or rpm package then run `/usr/share
 
 For detailed instructions on installing, managing, and configuring plugins, see the following:
 
-* [Intalling Plugings](./installation.md)
+* [Installing Plugins](./installation.md)
 * [Custom URL or file system](./plugin-management-custom-url.md)
 * [Installing multiple plugins](./installing-multiple-plugins.md)
 * [Mandatory plugins](./mandatory-plugins.md)

@@ -19,6 +19,7 @@ import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.xcontent.ToXContentFragment;
 import org.elasticsearch.xcontent.XContentBuilder;
+import org.elasticsearch.xcontent.XContentString;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -131,6 +132,78 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
         }
     }
 
+    /**
+     * This class models the ignore_above parameter in indices.
+     */
+    public static final class IgnoreAbove {
+
+        public static final int IGNORE_ABOVE_DEFAULT_VALUE = Integer.MAX_VALUE;
+        public static final int IGNORE_ABOVE_DEFAULT_VALUE_FOR_LOGSDB_INDICES = 8191;
+
+        private final Integer value;
+        private final Integer defaultValue;
+
+        public IgnoreAbove(Integer value) {
+            this(Objects.requireNonNull(value), IndexMode.STANDARD, IndexVersion.current());
+        }
+
+        public IgnoreAbove(Integer value, IndexMode indexMode) {
+            this(value, indexMode, IndexVersion.current());
+        }
+
+        public IgnoreAbove(Integer value, IndexMode indexMode, IndexVersion indexCreatedVersion) {
+            if (value != null && value < 0) {
+                throw new IllegalArgumentException("[ignore_above] must be positive, got [" + value + "]");
+            }
+
+            this.value = value;
+            this.defaultValue = getIgnoreAboveDefaultValue(indexMode, indexCreatedVersion);
+        }
+
+        public int get() {
+            return value != null ? value : defaultValue;
+        }
+
+        /**
+         * Returns whether ignore_above is set; at field or index level.
+         */
+        public boolean isSet() {
+            // if ignore_above equals default, its not considered to be set, even if it was explicitly set to the default value
+            return Integer.valueOf(get()).equals(defaultValue) == false;
+        }
+
+        /**
+         * Returns whether the given string will be ignored.
+         */
+        public boolean isIgnored(final String s) {
+            if (s == null) return false;
+            return lengthExceedsIgnoreAbove(s.length());
+        }
+
+        public boolean isIgnored(final XContentString s) {
+            if (s == null) return false;
+            return lengthExceedsIgnoreAbove(s.stringLength());
+        }
+
+        private boolean lengthExceedsIgnoreAbove(int strLength) {
+            return strLength > get();
+        }
+
+        public static int getIgnoreAboveDefaultValue(final IndexMode indexMode, final IndexVersion indexCreatedVersion) {
+            if (diffIgnoreAboveDefaultForLogs(indexMode, indexCreatedVersion)) {
+                return IGNORE_ABOVE_DEFAULT_VALUE_FOR_LOGSDB_INDICES;
+            } else {
+                return IGNORE_ABOVE_DEFAULT_VALUE;
+            }
+        }
+
+        private static boolean diffIgnoreAboveDefaultForLogs(final IndexMode indexMode, final IndexVersion indexCreatedVersion) {
+            return indexMode == IndexMode.LOGSDB
+                && (indexCreatedVersion != null && indexCreatedVersion.onOrAfter(IndexVersions.ENABLE_IGNORE_ABOVE_LOGSDB));
+        }
+
+    }
+
     private final String leafName;
 
     @SuppressWarnings("this-escape")
@@ -212,4 +285,19 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
      * Defines how this mapper counts towards {@link MapperService#INDEX_MAPPING_TOTAL_FIELDS_LIMIT_SETTING}.
      */
     public abstract int getTotalFieldsCount();
+
+    /**
+     * @return whether this mapper supports storing leaf array elements natively when synthetic source is enabled.
+     */
+    public final boolean supportStoringArrayOffsets() {
+        return getOffsetFieldName() != null;
+    }
+
+    /**
+     * @return the offset field name used to store offsets iff {@link #supportStoringArrayOffsets()} returns
+     * <code>true</code>.
+     */
+    public String getOffsetFieldName() {
+        return null;
+    }
 }

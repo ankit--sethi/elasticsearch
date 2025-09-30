@@ -1,4 +1,7 @@
 project: 'Elasticsearch'
+products:
+  - id: elasticsearch
+max_toc_depth: 2
 exclude:
   - README.md
   - internal/*
@@ -10,6 +13,7 @@ cross_links:
   - docs-content
   - ecs
   - eland
+  - elasticsearch
   - elasticsearch-hadoop
   - elasticsearch-java
   - elasticsearch-js
@@ -23,24 +27,14 @@ cross_links:
   - logstash
   - logstash-docs-md
 toc:
-  - toc: reference/elasticsearch
-  - toc: reference/community-contributed
-  - toc: reference/enrich-processor
-  - toc: reference/search-connectors
-  - toc: reference/elasticsearch-plugins
-  - toc: reference/query-languages
-  - toc: reference/scripting-languages
-  - toc: reference/text-analysis
-  - toc: reference/aggregations
+  - toc: reference
   - toc: release-notes
   - toc: extend
 subs:
-  version: 9.0.0
   api-request-title:   "Request"
   api-prereq-title:   "Prerequisites"
   api-description-title:   "Description"
   api-path-parms-title:   "Path parameters"
-  api-query-parms-title:   "Query parameters"
   api-request-body-title:   "Request body"
   api-examples-title:   "Examples"
   ecloud:   "Elastic Cloud"
@@ -54,7 +48,6 @@ subs:
   serverless-full:   "Elastic Cloud Serverless"
   serverless-short:   "Serverless"
   es-serverless:   "Elasticsearch Serverless"
-  ess-utm-params:   "?page=docs&placement=docs-body"
   cloud-only:   "This feature is designed for indirect use by Elasticsearch Service, Elastic Cloud Enterprise, and Elastic Cloud on Kubernetes. Direct use is not supported."
   security-app:   "Elastic Security app"
   stack-monitor-app:   "Stack Monitoring"
@@ -92,13 +85,10 @@ subs:
   search-snaps:   "searchable snapshots"
   slm:   "snapshot lifecycle management"
   slm-init:   "SLM"
-  dfeed:   "datafeed"
   dfeeds:   "datafeeds"
   dfeeds-cap:   "Datafeeds"
   anomaly-detect:   "anomaly detection"
   anomaly-jobs:   "anomaly detection jobs"
-  dataframe:   "data frame"
-  dataframe-cap:   "Data frame"
   transform:   "transform"
   transforms:   "transforms"
   transforms-cap:   "Transforms"
@@ -116,3 +106,5 @@ subs:
   feat-imp:   "feature importance"
   feat-imp-cap:   "Feature importance"
   nlp:   "natural language processing"
+  index-manage-app:   "Index Management"
+  connectors-app:   "Connectors"

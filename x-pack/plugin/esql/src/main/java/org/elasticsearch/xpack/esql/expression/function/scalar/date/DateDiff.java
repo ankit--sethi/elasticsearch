@@ -11,6 +11,7 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.time.DateUtils;
 import org.elasticsearch.compute.ann.Evaluator;
 import org.elasticsearch.compute.ann.Fixed;
@@ -56,7 +57,7 @@ import static org.elasticsearch.xpack.esql.core.type.DataTypeConverter.safeToInt
 public class DateDiff extends EsqlScalarFunction {
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(Expression.class, "DateDiff", DateDiff::new);
 
-    public static final ZoneId UTC = ZoneId.of("Z");
+    public static final ZoneId UTC = org.elasticsearch.xpack.esql.core.util.DateUtils.UTC;
 
     private final Expression unit;
     private final Expression startTimestamp;
@@ -193,7 +194,7 @@ public class DateDiff extends EsqlScalarFunction {
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        Source.EMPTY.writeTo(out);
+        source().writeTo(out);
         out.writeNamedWriteable(unit);
         out.writeNamedWriteable(startTimestamp);
         out.writeNamedWriteable(endTimestamp);
@@ -317,7 +318,7 @@ public class DateDiff extends EsqlScalarFunction {
 
         if (unit.foldable()) {
             try {
-                Part datePartField = Part.resolve(((BytesRef) unit.fold(toEvaluator.foldCtx())).utf8ToString());
+                Part datePartField = Part.resolve(BytesRefs.toString(unit.fold(toEvaluator.foldCtx())));
                 return constantFactory.build(source(), datePartField, startTimestampEvaluator, endTimestampEvaluator);
             } catch (IllegalArgumentException e) {
                 throw new InvalidArgumentException("invalid unit format for [{}]: {}", sourceText(), e.getMessage());

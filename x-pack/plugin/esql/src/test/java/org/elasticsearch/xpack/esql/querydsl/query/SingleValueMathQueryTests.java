@@ -76,7 +76,8 @@ public class SingleValueMathQueryTests extends MapperServiceTestCase {
                 SearchExecutionContext ctx = createSearchExecutionContext(mapper, new IndexSearcher(reader));
                 Query query = new SingleValueMatchQuery(
                     ctx.getForField(mapper.fieldType("foo"), MappedFieldType.FielddataOperation.SEARCH),
-                    Warnings.createWarnings(DriverContext.WarningsMode.COLLECT, 1, 1, "test")
+                    Warnings.createWarnings(DriverContext.WarningsMode.COLLECT, 1, 1, "test"),
+                    "single-value function encountered multi-value"
                 );
                 runCase(fieldValues, ctx.searcher().count(query));
                 setup.assertRewrite(ctx.searcher(), query);
@@ -91,7 +92,8 @@ public class SingleValueMathQueryTests extends MapperServiceTestCase {
                 SearchExecutionContext ctx = createSearchExecutionContext(mapper, new IndexSearcher(reader));
                 Query query = new SingleValueMatchQuery(
                     ctx.getForField(mapper.fieldType("foo"), MappedFieldType.FielddataOperation.SEARCH),
-                    Warnings.createWarnings(DriverContext.WarningsMode.COLLECT, 1, 1, "test")
+                    Warnings.createWarnings(DriverContext.WarningsMode.COLLECT, 1, 1, "test"),
+                    "single-value function encountered multi-value"
                 );
                 runCase(List.of(), ctx.searcher().count(query));
             }

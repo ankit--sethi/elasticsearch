@@ -57,10 +57,14 @@ if (useDra == false) {
             patternLayout {
               if (VersionProperties.isElasticsearchSnapshot()) {
                 artifact '/[organization]/[revision]/downloads/[organization]/[module]/[module]-[revision]-[classifier].[ext]'
+                artifact '/[organization]/[revision]/downloads/[organization]/filebeat/[module]-[revision]-[classifier].[ext]'
+                artifact '/[organization]/[revision]/downloads/[organization]/metricbeat/[module]-[revision]-[classifier].[ext]'
               } else {
                 // When building locally we always use snapshot artifacts even if passing `-Dbuild.snapshot=false`.
                 // Release builds are always done with a local repo.
                 artifact '/[organization]/[revision]-SNAPSHOT/downloads/[organization]/[module]/[module]-[revision]-SNAPSHOT-[classifier].[ext]'
+                artifact '/[organization]/[revision]-SNAPSHOT/downloads/[organization]/filebeat/[module]-[revision]-SNAPSHOT-[classifier].[ext]'
+                artifact '/[organization]/[revision]-SNAPSHOT/downloads/[organization]/metricbeat/[module]-[revision]-SNAPSHOT-[classifier].[ext]'
               }
             }
           }
@@ -93,9 +97,13 @@ configurations {
   tini
   allPlugins
   filebeat_aarch64
+  filebeat_fips_aarch64
   filebeat_x86_64
+  filebeat_fips_x86_64
   metricbeat_aarch64
+  metricbeat_fips_aarch64
   metricbeat_x86_64
+  metricbeat_fips_x86_64
   fips
 }
 
@@ -109,11 +117,19 @@ dependencies {
   log4jConfig project(path: ":distribution", configuration: 'log4jConfig')
   tini "krallin:tini:0.19.0:${tiniArch}"
   allPlugins project(path: ':plugins', configuration: 'allPlugins')
+  allPlugins project(path: ':x-pack:extras:plugins', configuration: 'allPlugins')
   filebeat_aarch64 "beats:filebeat:${VersionProperties.elasticsearch}:linux-arm64@tar.gz"
   filebeat_x86_64 "beats:filebeat:${VersionProperties.elasticsearch}:linux-x86_64@tar.gz"
+  filebeat_fips_aarch64 "beats:filebeat-fips:${VersionProperties.elasticsearch}:linux-arm64@tar.gz"
+  filebeat_fips_x86_64 "beats:filebeat-fips:${VersionProperties.elasticsearch}:linux-x86_64@tar.gz"
+
   metricbeat_aarch64 "beats:metricbeat:${VersionProperties.elasticsearch}:linux-arm64@tar.gz"
   metricbeat_x86_64 "beats:metricbeat:${VersionProperties.elasticsearch}:linux-x86_64@tar.gz"
-  fips "org.bouncycastle:bc-fips:1.0.2.5"
+
+  metricbeat_fips_aarch64 "beats:metricbeat-fips:${VersionProperties.elasticsearch}:linux-arm64@tar.gz"
+  metricbeat_fips_x86_64 "beats:metricbeat-fips:${VersionProperties.elasticsearch}:linux-x86_64@tar.gz"
+
+  fips "org.bouncycastle:bc-fips:1.0.2.6"
   fips "org.bouncycastle:bctls-fips:1.0.19"
 }
 
@@ -299,7 +315,7 @@ void addBuildDockerContextTask(Architecture architecture, DockerBase base, Strin
           filter TransformLog4jConfigFilter
         }
       }
-      if(base == DockerBase.FIPS) {
+      if(base == DockerBase.CLOUD_ESS_FIPS) {
 
         // If we're performing a release build, but `build.id` hasn't been set, we can
         // infer that we're not at the Docker building stage of the build, and therefore
@@ -308,8 +324,8 @@ void addBuildDockerContextTask(Architecture architecture, DockerBase base, Strin
         boolean includeBeats = VersionProperties.isElasticsearchSnapshot() == true || buildId != null || useDra
 
         if (includeBeats) {
-          from configurations.getByName("filebeat_${architecture.classifier}")
-          from configurations.getByName("metricbeat_${architecture.classifier}")
+          from configurations.getByName("filebeat_fips_${architecture.classifier}")
+          from configurations.getByName("metricbeat_fips_${architecture.classifier}")
           // For some reason, the artifact name can differ depending on what repository we used.
           rename ~/((?:file|metric)beat)-.*\.tar\.gz$/, "\$1-${VersionProperties.elasticsearch}.tar.gz"
         }
@@ -467,8 +483,10 @@ void addBuildDockerImageTask(Architecture architecture, DockerBase base) {
 
         baseImages = [baseImage]
         buildArgs = buildArgsMap
-      } else {
+      } else if(base.image != null) {
         baseImages = [base.image]
+      } else {
+        baseImages = []
       }
 
       Provider<DockerSupportService> serviceProvider = GradleUtils.getBuildService(
@@ -593,19 +611,19 @@ subprojects { Project subProject ->
     DockerBase base = DockerBase.DEFAULT
     if (subProject.name.contains('ironbank-')) {
       base = DockerBase.IRON_BANK
-    } else if (subProject.name.contains('cloud-ess-')) {
+    } else if (subProject.name.contains('cloud-ess-docker')) {
       base = DockerBase.CLOUD_ESS
     } else if (subProject.name.contains('wolfi-')) {
       base = DockerBase.WOLFI
-    } else if (subProject.name.contains('fips-')) {
-      base = DockerBase.FIPS
+    } else if (subProject.name.contains('cloud-ess-fips-docker')) {
+      base = DockerBase.CLOUD_ESS_FIPS
     }
 
     final String arch = architecture == Architecture.AARCH64 ? '-aarch64' : ''
     final String extension =
       (base == DockerBase.IRON_BANK ? 'ironbank.tar' :
         (base == DockerBase.CLOUD_ESS ? 'cloud-ess.tar' :
-          (base == DockerBase.FIPS ? 'fips.tar' :
+          (base == DockerBase.CLOUD_ESS_FIPS ? 'cloud-ess-fips.tar' :
             (base == DockerBase.WOLFI ? 'wolfi.tar' :
               'docker.tar'))))
     final String artifactName = "elasticsearch${arch}${base.suffix}_test"
@@ -641,7 +659,7 @@ subprojects { Project subProject ->
       it.setCompression(Compression.GZIP)
       it.getArchiveBaseName().set("elasticsearch${base.suffix}-${VersionProperties.elasticsearch}-docker-image")
       it.getArchiveVersion().set("")
-      it.getArchiveClassifier().set(architecture == Architecture.AARCH64 ? 'aarch64' : '')
+      it.getArchiveClassifier().set(architecture.dockerClassifier)
       it.getDestinationDirectory().set(new File(project.parent.buildDir, 'distributions'))
       it.dependsOn(exportTask)
     }
@@ -650,6 +668,11 @@ subprojects { Project subProject ->
       dependsOn compressExportTask
     }
 
+    tasks.named('assemble').configure {
+      dependsOn exportTask
+    }
+
+    // deprecated here for backwards compatibility of DistroTestPlugin and DistributionDownloadPlugin
     artifacts.add('default', file(tarFile)) {
       type = 'tar'
       name = artifactName

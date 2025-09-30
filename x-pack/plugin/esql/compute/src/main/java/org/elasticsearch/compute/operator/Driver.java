@@ -24,6 +24,7 @@ import org.elasticsearch.tasks.TaskCancelledException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -75,8 +76,8 @@ public class Driver implements Releasable, Describable {
     private final long startNanos;
     private final DriverContext driverContext;
     private final Supplier<String> description;
-    private final List<Operator> activeOperators;
-    private final List<DriverStatus.OperatorStatus> statusOfCompletedOperators = new ArrayList<>();
+    private List<Operator> activeOperators;
+    private final List<OperatorStatus> statusOfCompletedOperators = new ArrayList<>();
     private final Releasable releasable;
     private final long statusNanos;
 
@@ -114,6 +115,8 @@ public class Driver implements Releasable, Describable {
     public Driver(
         String sessionId,
         String shortDescription,
+        String clusterName,
+        String nodeName,
         long startTime,
         long startNanos,
         DriverContext driverContext,
@@ -140,6 +143,8 @@ public class Driver implements Releasable, Describable {
             new DriverStatus(
                 sessionId,
                 shortDescription,
+                clusterName,
+                nodeName,
                 startTime,
                 System.currentTimeMillis(),
                 0,
@@ -177,10 +182,13 @@ public class Driver implements Releasable, Describable {
         while (true) {
             IsBlockedResult isBlocked = Operator.NOT_BLOCKED;
             try {
+                assert driverContext.assertBeginRunLoop();
                 isBlocked = runSingleLoopIteration();
             } catch (DriverEarlyTerminationException unused) {
-                closeEarlyFinishedOperators();
+                closeEarlyFinishedOperators(activeOperators.listIterator(activeOperators.size()));
                 assert isFinished() : "not finished after early termination";
+            } finally {
+                assert driverContext.assertEndRunLoop();
             }
             totalIterationsThisRun++;
             iterationsSinceLastStatusUpdate++;
@@ -244,9 +252,13 @@ public class Driver implements Releasable, Describable {
         driverContext.checkForEarlyTermination();
         boolean movedPage = false;
 
-        for (int i = 0; i < activeOperators.size() - 1; i++) {
-            Operator op = activeOperators.get(i);
-            Operator nextOp = activeOperators.get(i + 1);
+        ListIterator<Operator> iterator = activeOperators.listIterator();
+        while (iterator.hasNext()) {
+            Operator op = iterator.next();
+            if (iterator.hasNext() == false) {
+                break;
+            }
+            Operator nextOp = activeOperators.get(iterator.nextIndex());
 
             // skip blocked operator
             if (op.isBlocked().listener().isDone() == false) {
@@ -255,6 +267,8 @@ public class Driver implements Releasable, Describable {
 
             if (op.isFinished() == false && nextOp.needsInput()) {
                 driverContext.checkForEarlyTermination();
+                assert nextOp.isFinished() == false || nextOp instanceof ExchangeSinkOperator || nextOp instanceof LimitOperator
+                    : "next operator should not be finished yet: " + nextOp;
                 Page page = op.getOutput();
                 if (page == null) {
                     // No result, just move to the next iteration
@@ -276,11 +290,15 @@ public class Driver implements Releasable, Describable {
 
             if (op.isFinished()) {
                 driverContext.checkForEarlyTermination();
-                nextOp.finish();
+                var originalIndex = iterator.previousIndex();
+                var index = closeEarlyFinishedOperators(iterator);
+                if (index >= 0) {
+                    iterator = new ArrayList<>(activeOperators).listIterator(originalIndex - index);
+                }
             }
         }
 
-        closeEarlyFinishedOperators();
+        closeEarlyFinishedOperators(activeOperators.listIterator(activeOperators.size()));
 
         if (movedPage == false) {
             return oneOf(
@@ -293,22 +311,24 @@ public class Driver implements Releasable, Describable {
         return Operator.NOT_BLOCKED;
     }
 
-    private void closeEarlyFinishedOperators() {
-        for (int index = activeOperators.size() - 1; index >= 0; index--) {
-            if (activeOperators.get(index).isFinished()) {
+    // Returns the index of the last operator that was closed, -1 if no operator was closed.
+    private int closeEarlyFinishedOperators(ListIterator<Operator> operators) {
+        var iterator = activeOperators.listIterator(operators.nextIndex());
+        while (iterator.hasPrevious()) {
+            if (iterator.previous().isFinished()) {
+                var index = iterator.nextIndex();
                 /*
                  * Close and remove this operator and all source operators in the
                  * most paranoid possible way. Closing operators shouldn't throw,
                  * but if it does, this will make sure we don't try to close any
                  * that succeed twice.
                  */
-                List<Operator> finishedOperators = this.activeOperators.subList(0, index + 1);
-                Iterator<Operator> itr = finishedOperators.iterator();
-                while (itr.hasNext()) {
-                    Operator op = itr.next();
-                    statusOfCompletedOperators.add(new DriverStatus.OperatorStatus(op.toString(), op.status()));
+                Iterator<Operator> finishedOperators = this.activeOperators.subList(0, index + 1).iterator();
+                while (finishedOperators.hasNext()) {
+                    Operator op = finishedOperators.next();
+                    statusOfCompletedOperators.add(new OperatorStatus(op.toString(), op.status()));
                     op.close();
-                    itr.remove();
+                    finishedOperators.remove();
                 }
 
                 // Finish the next operator, which is now the first operator.
@@ -316,9 +336,10 @@ public class Driver implements Releasable, Describable {
                     Operator newRootOperator = activeOperators.get(0);
                     newRootOperator.finish();
                 }
-                break;
+                return index;
             }
         }
+        return -1;
     }
 
     public void cancel(String reason) {
@@ -479,6 +500,8 @@ public class Driver implements Releasable, Describable {
         }
         return new DriverProfile(
             status.description(),
+            status.clusterName(),
+            status.nodeName(),
             status.started(),
             status.lastUpdated(),
             finishNanos - startNanos,
@@ -526,13 +549,15 @@ public class Driver implements Releasable, Describable {
             return new DriverStatus(
                 sessionId,
                 shortDescription,
+                prev.clusterName(),
+                prev.nodeName(),
                 startTime,
                 now,
                 prev.cpuNanos() + extraCpuNanos,
                 prev.iterations() + extraIterations,
                 status,
-                statusOfCompletedOperators,
-                activeOperators.stream().map(op -> new DriverStatus.OperatorStatus(op.toString(), op.status())).toList(),
+                List.copyOf(statusOfCompletedOperators),
+                activeOperators.stream().map(op -> new OperatorStatus(op.toString(), op.status())).toList(),
                 sleeps
             );
         });

@@ -40,7 +40,6 @@ import static org.elasticsearch.entitlement.runtime.policy.entitlements.FilesEnt
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 
-@ESTestCase.WithoutSecurityManager
 public class FileAccessTreeTests extends ESTestCase {
 
     static Path root;
@@ -60,6 +59,7 @@ public class FileAccessTreeTests extends ESTestCase {
         Path.of("/home"),
         Path.of("/config"),
         new Path[] { Path.of("/data1"), Path.of("/data2") },
+        Path.of("/shareddata"),
         new Path[] { Path.of("/shared1"), Path.of("/shared2") },
         Path.of("/lib"),
         Path.of("/modules"),
@@ -300,15 +300,15 @@ public class FileAccessTreeTests extends ESTestCase {
     }
 
     public void testTempDirAccess() {
-        var tree = FileAccessTree.of("test-component", "test-module", FilesEntitlement.EMPTY, TEST_PATH_LOOKUP, null, List.of());
-        assertThat(tree.canRead(TEST_PATH_LOOKUP.resolveRelativePaths(TEMP, Path.of("")).findFirst().get()), is(true));
-        assertThat(tree.canWrite(TEST_PATH_LOOKUP.resolveRelativePaths(TEMP, Path.of("")).findFirst().get()), is(true));
+        var tree = FileAccessTree.of("test-component", "test-module", FilesEntitlement.EMPTY, TEST_PATH_LOOKUP, List.of(), List.of());
+        assertThat(tree.canRead(TEST_PATH_LOOKUP.getBaseDirPaths(TEMP).findFirst().get()), is(true));
+        assertThat(tree.canWrite(TEST_PATH_LOOKUP.getBaseDirPaths(TEMP).findFirst().get()), is(true));
     }
 
     public void testConfigDirAccess() {
-        var tree = FileAccessTree.of("test-component", "test-module", FilesEntitlement.EMPTY, TEST_PATH_LOOKUP, null, List.of());
-        assertThat(tree.canRead(TEST_PATH_LOOKUP.resolveRelativePaths(CONFIG, Path.of("")).findFirst().get()), is(true));
-        assertThat(tree.canWrite(TEST_PATH_LOOKUP.resolveRelativePaths(CONFIG, Path.of("")).findFirst().get()), is(false));
+        var tree = FileAccessTree.of("test-component", "test-module", FilesEntitlement.EMPTY, TEST_PATH_LOOKUP, List.of(), List.of());
+        assertThat(tree.canRead(TEST_PATH_LOOKUP.getBaseDirPaths(CONFIG).findFirst().get()), is(true));
+        assertThat(tree.canWrite(TEST_PATH_LOOKUP.getBaseDirPaths(CONFIG).findFirst().get()), is(false));
     }
 
     public void testBasicExclusiveAccess() {
@@ -462,7 +462,7 @@ public class FileAccessTreeTests extends ESTestCase {
                 )
             ),
             TEST_PATH_LOOKUP,
-            null,
+            List.of(),
             List.of()
         );
 
@@ -488,7 +488,7 @@ public class FileAccessTreeTests extends ESTestCase {
                 )
             ),
             TEST_PATH_LOOKUP,
-            null,
+            List.of(),
             List.of()
         );
 
@@ -505,7 +505,7 @@ public class FileAccessTreeTests extends ESTestCase {
     }
 
     FileAccessTree accessTree(FilesEntitlement entitlement, List<ExclusivePath> exclusivePaths) {
-        return FileAccessTree.of("test-component", "test-module", entitlement, TEST_PATH_LOOKUP, null, exclusivePaths);
+        return FileAccessTree.of("test-component", "test-module", entitlement, TEST_PATH_LOOKUP, List.of(), exclusivePaths);
     }
 
     static FilesEntitlement entitlement(String... values) {

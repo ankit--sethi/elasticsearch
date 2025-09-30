@@ -62,7 +62,6 @@ import static org.elasticsearch.core.Strings.format;
 
 public abstract class FieldMapper extends Mapper {
     private static final Logger logger = LogManager.getLogger(FieldMapper.class);
-
     public static final Setting<Boolean> IGNORE_MALFORMED_SETTING = Setting.boolSetting("index.mapping.ignore_malformed", settings -> {
         if (IndexSettings.MODE.get(settings) == IndexMode.LOGSDB
             && IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(settings).onOrAfter(IndexVersions.ENABLE_IGNORE_MALFORMED_LOGSDB)) {
@@ -201,7 +200,7 @@ public abstract class FieldMapper extends Mapper {
         }
     }
 
-    private void doParseMultiFields(DocumentParserContext context) throws IOException {
+    protected void doParseMultiFields(DocumentParserContext context) throws IOException {
         context.path().add(leafName());
         for (FieldMapper mapper : builderParams.multiFields.mappers) {
             mapper.parse(context);
@@ -209,7 +208,7 @@ public abstract class FieldMapper extends Mapper {
         context.path().remove();
     }
 
-    private static void throwIndexingWithScriptParam() {
+    protected static void throwIndexingWithScriptParam() {
         throw new IllegalArgumentException("Cannot index data directly into a field with a [script] parameter");
     }
 
@@ -452,6 +451,17 @@ public abstract class FieldMapper extends Mapper {
 
     public Map<String, NamedAnalyzer> indexAnalyzers() {
         return Map.of();
+    }
+
+    /**
+     * Returns a {@link SourceLoader.SyntheticVectorsLoader} instance responsible for loading
+     * synthetic vector values from the index.
+     *
+     * @return a {@link SourceLoader.SyntheticVectorsLoader} used to extract synthetic vectors,
+     *         or {@code null} if no loader is provided or applicable in this context
+     */
+    public SourceLoader.SyntheticVectorsLoader syntheticVectorsLoader() {
+        return null;
     }
 
     /**
@@ -849,6 +859,10 @@ public abstract class FieldMapper extends Mapper {
 
         public boolean isConfigured() {
             return isSet && Objects.equals(value, getDefaultValue()) == false;
+        }
+
+        public boolean isSet() {
+            return isSet;
         }
 
         /**
@@ -1309,6 +1323,26 @@ public abstract class FieldMapper extends Mapper {
 
         public static Parameter<Boolean> docValuesParam(Function<FieldMapper, Boolean> initializer, boolean defaultValue) {
             return Parameter.boolParam("doc_values", false, initializer, defaultValue);
+        }
+
+        public static Parameter<Boolean> normsParam(Function<FieldMapper, Boolean> initializer, boolean defaultValue) {
+            // norms can be updated from 'true' to 'false' but not vice-versa
+            return Parameter.boolParam("norms", true, initializer, defaultValue)
+                .setMergeValidator((prev, curr, c) -> prev == curr || (prev && curr == false));
+        }
+
+        public static Parameter<Boolean> normsParam(Function<FieldMapper, Boolean> initializer, Supplier<Boolean> defaultValueSupplier) {
+            // norms can be updated from 'true' to 'false' but not vice-versa
+            return Parameter.boolParam("norms", true, initializer, defaultValueSupplier)
+                .setMergeValidator((prev, curr, c) -> prev == curr || (prev && curr == false));
+        }
+
+        public static Parameter<Integer> ignoreAboveParam(Function<FieldMapper, Integer> initializer, int defaultValue) {
+            return Parameter.intParam("ignore_above", true, initializer, defaultValue).addValidator(v -> {
+                if (v < 0) {
+                    throw new IllegalArgumentException("[ignore_above] must be positive, got [" + v + "]");
+                }
+            });
         }
 
         /**

@@ -107,7 +107,11 @@ public class MlAnomaliesIndexUpdateTests extends ESTestCase {
             new OriginSettingClient(mock(Client.class), "doesn't matter")
         );
 
-        IndicesAliasesRequestBuilder aliasRequestBuilder = new IndicesAliasesRequestBuilder(mock(ElasticsearchClient.class));
+        IndicesAliasesRequestBuilder aliasRequestBuilder = new IndicesAliasesRequestBuilder(
+            mock(ElasticsearchClient.class),
+            TEST_REQUEST_TIMEOUT,
+            TEST_REQUEST_TIMEOUT
+        );
 
         var newIndex = anomaliesIndex + "-000001";
         var request = updater.addIndexAliasesRequests(aliasRequestBuilder, anomaliesIndex, newIndex, csBuilder.build());
@@ -156,6 +160,7 @@ public class MlAnomaliesIndexUpdateTests extends ESTestCase {
         // everything up to date so no action for the client
         verify(client).settings();
         verify(client).threadPool();
+        verify(client).projectResolver();
         verifyNoMoreInteractions(client);
     }
 
@@ -175,6 +180,7 @@ public class MlAnomaliesIndexUpdateTests extends ESTestCase {
         updater.runUpdate(csBuilder.build());
         verify(client).settings();
         verify(client, times(7)).threadPool();
+        verify(client).projectResolver();
         verify(client, times(2)).execute(same(TransportIndicesAliasesAction.TYPE), any(), any());  // create rollover alias and update
         verify(client).execute(same(RolloverAction.INSTANCE), any(), any());  // index rolled over
         verifyNoMoreInteractions(client);

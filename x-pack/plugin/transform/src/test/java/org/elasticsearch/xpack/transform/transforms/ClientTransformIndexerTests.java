@@ -27,6 +27,7 @@ import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.CompositeBytesReference;
@@ -73,22 +74,26 @@ import org.elasticsearch.xpack.transform.transforms.scheduling.TransformSchedule
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
+import static org.hamcrest.Matchers.equalTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 public class ClientTransformIndexerTests extends ESTestCase {
@@ -211,6 +216,16 @@ public class ClientTransformIndexerTests extends ESTestCase {
             assertEquals(1L, client.getPitContextCounter());
 
             indexer.onStop();
+            assertEquals(0L, client.getPitContextCounter());
+
+            this.<SearchResponse>assertAsync(listener -> indexer.doNextSearch(0, listener), response -> {
+                assertEquals(new BytesArray("the_pit_id+"), response.pointInTimeId());
+            });
+
+            var paceCounter = new AtomicInteger(0);
+            client.addBeforeCloseListener(() -> assertThat(paceCounter.getAndIncrement(), equalTo(0)));
+            indexer.closePointInTime(() -> assertThat(paceCounter.getAndIncrement(), equalTo(1)));
+            assertThat(paceCounter.get(), equalTo(2));
             assertEquals(0L, client.getPitContextCounter());
 
             this.<SearchResponse>assertAsync(listener -> indexer.doNextSearch(0, listener), response -> {
@@ -505,11 +520,14 @@ public class ClientTransformIndexerTests extends ESTestCase {
     private ClusterService serviceWithBlockCheck(boolean checkResponse) {
         var clusterBlocks = mock(ClusterBlocks.class);
         when(clusterBlocks.indexBlocked(eq(ClusterBlockLevel.WRITE), anyString())).thenReturn(checkResponse);
-        var metadata = mock(Metadata.class);
-        when(metadata.custom(eq(TransformMetadata.TYPE))).thenReturn(TransformMetadata.EMPTY_METADATA);
+
+        var project = spy(ProjectMetadata.builder(Metadata.DEFAULT_PROJECT_ID).build());
+        when(project.custom(eq(TransformMetadata.TYPE))).thenReturn(TransformMetadata.EMPTY_METADATA);
+
+        var metadata = Metadata.builder().put(project).build();
         var clusterState = mock(ClusterState.class);
         when(clusterState.blocks()).thenReturn(clusterBlocks);
-        when(clusterState.getMetadata()).thenReturn(metadata);
+        when(clusterState.metadata()).thenReturn(metadata);
         var clusterService = mock(ClusterService.class);
         when(clusterService.state()).thenReturn(clusterState);
         return clusterService;
@@ -517,7 +535,12 @@ public class ClientTransformIndexerTests extends ESTestCase {
 
     private IndexNameExpressionResolver resolver() {
         var resolver = mock(IndexNameExpressionResolver.class);
-        when(resolver.concreteWriteIndex(any(), any(), any(), anyBoolean(), anyBoolean())).thenAnswer(ans -> {
+        when(resolver.concreteWriteIndex(any(ProjectMetadata.class), any(), any(), anyBoolean(), anyBoolean())).thenAnswer(ans -> {
+            Index destIndex = mock();
+            when(destIndex.getName()).thenReturn(ans.getArgument(2));
+            return destIndex;
+        });
+        when(resolver.concreteWriteIndex(any(ClusterState.class), any(), any(), anyBoolean(), anyBoolean())).thenAnswer(ans -> {
             Index destIndex = mock();
             when(destIndex.getName()).thenReturn(ans.getArgument(2));
             return destIndex;
@@ -576,10 +599,15 @@ public class ClientTransformIndexerTests extends ESTestCase {
     private static class PitMockClient extends NoOpClient {
         private final boolean pitSupported;
         private AtomicLong pitContextCounter = new AtomicLong();
+        private List<Runnable> beforeCloseListeners = new ArrayList<>();
 
         PitMockClient(ThreadPool threadPool, boolean pitSupported) {
             super(threadPool);
             this.pitSupported = pitSupported;
+        }
+
+        public void addBeforeCloseListener(Runnable listener) {
+            this.beforeCloseListeners.add(listener);
         }
 
         public long getPitContextCounter() {
@@ -603,6 +631,7 @@ public class ClientTransformIndexerTests extends ESTestCase {
                 }
                 return;
             } else if (request instanceof ClosePointInTimeRequest) {
+                beforeCloseListeners.forEach(Runnable::run);
                 ClosePointInTimeResponse response = new ClosePointInTimeResponse(true, 1);
                 assert pitContextCounter.get() > 0;
                 pitContextCounter.decrementAndGet();

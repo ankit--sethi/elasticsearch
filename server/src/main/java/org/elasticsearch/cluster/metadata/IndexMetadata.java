@@ -316,6 +316,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return block;
         }
 
+        @Override
+        public String toString() {
+            return name;
+        }
+
         public static APIBlock fromName(String name) {
             for (APIBlock block : APIBlock.values()) {
                 if (block.name.equals(name)) {
@@ -510,6 +515,44 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     );
 
     /**
+     * Populated when an index that belongs to a time_series data stream is created or its mappings are updated.
+     * This setting is used so that the coordinating node knows which fields are time series dimensions
+     * as it doesn't have access to mappings.
+     * It's important that this setting is kept up-to-date when new dimensions are added to the mapping.
+     * The tsid and shard routing for existing time series that don't use the new dimension field won't change as a result of that update.
+     * When this setting is populated, an optimization kicks in that allows the coordinating node to create the tsid and the routing hash
+     * in one go.
+     * Otherwise, the coordinating node only creates the routing hash based on {@link #INDEX_ROUTING_PATH} and the tsid is created
+     * during document parsing, effectively requiring two passes over the document.
+     * <p>
+     * The condition for this optimization to kick in is that all possible dimension fields can be identified
+     * via a list of wildcard patterns.
+     * If that's not the case (for example when certain types of dynamic templates are used),
+     * the {@link #INDEX_ROUTING_PATH} is populated instead.
+     */
+    public static final Setting<List<String>> INDEX_DIMENSIONS = Setting.stringListSetting(
+        "index.dimensions",
+        Setting.Property.IndexScope,
+        Property.Dynamic,
+        Property.PrivateIndex,
+        Property.ServerlessPublic
+    );
+
+    /**
+     * Allows to disable the {@link #INDEX_DIMENSIONS}-based tsid creation strategy on a per-index basis.
+     * This can help to mitigate potential issues with that strategy.
+     * For example, when using this strategy,
+     * it's not allowed to add a dynamic template that defines dimension fields to existing backing indices of a time series data stream.
+     */
+    public static final Setting<Boolean> INDEX_DIMENSIONS_TSID_STRATEGY_ENABLED = Setting.boolSetting(
+        "index.dimensions_tsid_strategy_enabled",
+        true,
+        Setting.Property.IndexScope,
+        Property.Final,
+        Property.ServerlessPublic
+    );
+
+    /**
      * Legacy index setting, kept for 7.x BWC compatibility. This setting has no effect in 8.x. Do not use.
      * TODO: Remove in 9.0
      */
@@ -561,6 +604,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     public static final String KEY_INFERENCE_FIELDS = "field_inference";
 
+    public static final String KEY_RESHARDING = "resharding";
+
     public static final String INDEX_STATE_FILE_PREFIX = "state-";
 
     static final TransportVersion STATS_AND_FORECAST_ADDED = TransportVersions.V_8_6_0;
@@ -569,6 +614,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final int routingFactor;
     private final int routingPartitionSize;
     private final List<String> routingPaths;
+    private final List<String> timeSeriesDimensions;
 
     private final int numberOfShards;
     private final int numberOfReplicas;
@@ -654,6 +700,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final Double writeLoadForecast;
     @Nullable
     private final Long shardSizeInBytesForecast;
+    @Nullable
+    private final IndexReshardingMetadata reshardingMetadata;
 
     private IndexMetadata(
         final Index index,
@@ -680,6 +728,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final int routingNumShards,
         final int routingPartitionSize,
         final List<String> routingPaths,
+        final List<String> timeSeriesDimensions,
         final ActiveShardCount waitForActiveShards,
         final ImmutableOpenMap<String, RolloverInfo> rolloverInfos,
         final boolean isSystem,
@@ -702,7 +751,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final IndexVersion indexCompatibilityVersion,
         @Nullable final IndexMetadataStats stats,
         @Nullable final Double writeLoadForecast,
-        @Nullable Long shardSizeInBytesForecast
+        @Nullable Long shardSizeInBytesForecast,
+        @Nullable IndexReshardingMetadata reshardingMetadata
     ) {
         this.index = index;
         this.version = version;
@@ -734,6 +784,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.routingFactor = routingNumShards / numberOfShards;
         this.routingPartitionSize = routingPartitionSize;
         this.routingPaths = routingPaths;
+        this.timeSeriesDimensions = timeSeriesDimensions;
         this.waitForActiveShards = waitForActiveShards;
         this.rolloverInfos = rolloverInfos;
         this.isSystem = isSystem;
@@ -761,6 +812,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.writeLoadForecast = writeLoadForecast;
         this.shardSizeInBytesForecast = shardSizeInBytesForecast;
         assert numberOfShards * routingFactor == routingNumShards : routingNumShards + " must be a multiple of " + numberOfShards;
+        this.reshardingMetadata = reshardingMetadata;
     }
 
     IndexMetadata withMappingMetadata(MappingMetadata mapping) {
@@ -792,6 +844,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.routingNumShards,
             this.routingPartitionSize,
             this.routingPaths,
+            this.timeSeriesDimensions,
             this.waitForActiveShards,
             this.rolloverInfos,
             this.isSystem,
@@ -814,7 +867,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.indexCompatibilityVersion,
             this.stats,
             this.writeLoadForecast,
-            this.shardSizeInBytesForecast
+            this.shardSizeInBytesForecast,
+            this.reshardingMetadata
         );
     }
 
@@ -853,6 +907,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.routingNumShards,
             this.routingPartitionSize,
             this.routingPaths,
+            this.timeSeriesDimensions,
             this.waitForActiveShards,
             this.rolloverInfos,
             this.isSystem,
@@ -875,7 +930,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.indexCompatibilityVersion,
             this.stats,
             this.writeLoadForecast,
-            this.shardSizeInBytesForecast
+            this.shardSizeInBytesForecast,
+            this.reshardingMetadata
         );
     }
 
@@ -885,15 +941,25 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return updated instance with incremented primary term
      */
     public IndexMetadata withIncrementedPrimaryTerm(int shardId) {
-        final long[] incremented = this.primaryTerms.clone();
-        incremented[shardId]++;
+        return withSetPrimaryTerm(shardId, this.primaryTerms[shardId] + 1);
+    }
+
+    /**
+     * Creates a copy of this instance that has the primary term for the given shard id set to the value provided.
+     * @param shardId shard id to set primary term for
+     * @param primaryTerm primary term to set
+     * @return updated instance with set primary term
+     */
+    public IndexMetadata withSetPrimaryTerm(int shardId, long primaryTerm) {
+        final long[] newPrimaryTerms = this.primaryTerms.clone();
+        newPrimaryTerms[shardId] = primaryTerm;
         return new IndexMetadata(
             this.index,
             this.version,
             this.mappingVersion,
             this.settingsVersion,
             this.aliasesVersion,
-            incremented,
+            newPrimaryTerms,
             this.state,
             this.numberOfShards,
             this.numberOfReplicas,
@@ -912,6 +978,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.routingNumShards,
             this.routingPartitionSize,
             this.routingPaths,
+            this.timeSeriesDimensions,
             this.waitForActiveShards,
             this.rolloverInfos,
             this.isSystem,
@@ -934,7 +1001,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.indexCompatibilityVersion,
             this.stats,
             this.writeLoadForecast,
-            this.shardSizeInBytesForecast
+            this.shardSizeInBytesForecast,
+            this.reshardingMetadata
         );
     }
 
@@ -972,6 +1040,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.routingNumShards,
             this.routingPartitionSize,
             this.routingPaths,
+            this.timeSeriesDimensions,
             this.waitForActiveShards,
             this.rolloverInfos,
             this.isSystem,
@@ -994,7 +1063,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.indexCompatibilityVersion,
             this.stats,
             this.writeLoadForecast,
-            this.shardSizeInBytesForecast
+            this.shardSizeInBytesForecast,
+            this.reshardingMetadata
         );
     }
 
@@ -1027,6 +1097,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.routingNumShards,
             this.routingPartitionSize,
             this.routingPaths,
+            this.timeSeriesDimensions,
             this.waitForActiveShards,
             this.rolloverInfos,
             this.isSystem,
@@ -1049,7 +1120,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.indexCompatibilityVersion,
             this.stats,
             this.writeLoadForecast,
-            this.shardSizeInBytesForecast
+            this.shardSizeInBytesForecast,
+            this.reshardingMetadata
         );
     }
 
@@ -1124,6 +1196,71 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return numberOfShards;
     }
 
+    /**
+     * This method is used in the context of the resharding feature.
+     * Given a {@code shardId} and {@code minShardState} i.e. the minimum target shard state required for
+     * an operation to be routed to target shards,
+     * this method returns the "effective" shard count as seen by this IndexMetadata.
+     *
+     * The reshardSplitShardCountSummary tells us whether the coordinator routed requests to the source shard or
+     * to both source and target shards. Requests are routed to both source and target shards
+     * once the target shards are ready for an operation.
+     *
+     * The coordinator routes requests to source and target shards, based on its cluster state view of the state of shards
+     * undergoing a resharding operation. This method is used to populate a field in the shard level requests sent to
+     * source and target shards, as a proxy for the cluster state version. The same calculation is then done at the source shard
+     * to verify if the coordinator and source node's view of the resharding state have a mismatch.
+     * See {@link org.elasticsearch.action.support.replication.ReplicationRequest#reshardSplitShardCountSummary}
+     * for a detailed description of how this value is used.
+     *
+     * @param shardId  Input shardId for which we want to calculate the effective shard count
+     * @param minShardState Minimum target shard state required for the target to be considered ready
+     * @return Effective shard count as seen by an operation using this IndexMetadata
+     */
+    private int getReshardSplitShardCountSummary(int shardId, IndexReshardingState.Split.TargetShardState minShardState) {
+        assert shardId >= 0 && shardId < getNumberOfShards() : "shardId is out of bounds";
+        int shardCount = getNumberOfShards();
+        if (reshardingMetadata != null) {
+            if (reshardingMetadata.getSplit().isTargetShard(shardId)) {
+                int sourceShardId = reshardingMetadata.getSplit().sourceShard(shardId);
+                // Requests cannot be routed to target shards until they are ready
+                assert reshardingMetadata.getSplit().allTargetStatesAtLeast(sourceShardId, minShardState) : "unexpected target state";
+                shardCount = reshardingMetadata.getSplit().shardCountAfter();
+            } else if (reshardingMetadata.getSplit().isSourceShard(shardId)) {
+                if (reshardingMetadata.getSplit().allTargetStatesAtLeast(shardId, minShardState)) {
+                    shardCount = reshardingMetadata.getSplit().shardCountAfter();
+                } else {
+                    shardCount = reshardingMetadata.getSplit().shardCountBefore();
+                }
+            }
+        }
+        return shardCount;
+    }
+
+    /**
+     * This method is used in the context of the resharding feature.
+     * Given a {@code shardId}, this method returns the "effective" shard count
+     * as seen by this IndexMetadata, for indexing operations.
+     *
+     * See {@code getReshardSplitShardCountSummary} for more details.
+     * @param shardId  Input shardId for which we want to calculate the effective shard count
+     */
+    public int getReshardSplitShardCountSummaryForIndexing(int shardId) {
+        return (getReshardSplitShardCountSummary(shardId, IndexReshardingState.Split.TargetShardState.HANDOFF));
+    }
+
+    /**
+     * This method is used in the context of the resharding feature.
+     * Given a {@code shardId}, this method returns the "effective" shard count
+     * as seen by this IndexMetadata, for search operations.
+     *
+     * See {@code getReshardSplitShardCount} for more details.
+     * @param shardId  Input shardId for which we want to calculate the effective shard count
+     */
+    public int getReshardSplitShardCountSummaryForSearch(int shardId) {
+        return (getReshardSplitShardCountSummary(shardId, IndexReshardingState.Split.TargetShardState.SPLIT));
+    }
+
     public int getNumberOfReplicas() {
         return numberOfReplicas;
     }
@@ -1138,6 +1275,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     public List<String> getRoutingPaths() {
         return routingPaths;
+    }
+
+    public List<String> getTimeSeriesDimensions() {
+        return timeSeriesDimensions;
     }
 
     public int getTotalNumberOfShards() {
@@ -1413,6 +1554,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         }
     }
 
+    @Nullable
+    public IndexReshardingMetadata getReshardingMetadata() {
+        return reshardingMetadata;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -1467,6 +1613,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         if (isSystem != that.isSystem) {
             return false;
         }
+        if (Objects.equals(reshardingMetadata, that.reshardingMetadata) == false) {
+            return false;
+        }
         return true;
     }
 
@@ -1486,6 +1635,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         result = 31 * result + rolloverInfos.hashCode();
         result = 31 * result + inferenceFields.hashCode();
         result = 31 * result + Boolean.hashCode(isSystem);
+        result = 31 * result + Objects.hashCode(reshardingMetadata);
         return result;
     }
 
@@ -1547,6 +1697,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private final IndexMetadataStats stats;
         private final Double indexWriteLoadForecast;
         private final Long shardSizeInBytesForecast;
+        private final IndexReshardingMetadata reshardingMetadata;
 
         IndexMetadataDiff(IndexMetadata before, IndexMetadata after) {
             index = after.index.getName();
@@ -1586,6 +1737,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             stats = after.stats;
             indexWriteLoadForecast = after.writeLoadForecast;
             shardSizeInBytesForecast = after.shardSizeInBytesForecast;
+            reshardingMetadata = after.reshardingMetadata;
         }
 
         private static final DiffableUtils.DiffableValueReader<String, AliasMetadata> ALIAS_METADATA_DIFF_VALUE_READER =
@@ -1658,6 +1810,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             } else {
                 eventIngestedRange = IndexLongFieldRange.UNKNOWN;
             }
+            if (in.getTransportVersion().onOrAfter(TransportVersions.INDEX_RESHARDING_METADATA)) {
+                reshardingMetadata = in.readOptionalWriteable(IndexReshardingMetadata::new);
+            } else {
+                reshardingMetadata = null;
+            }
         }
 
         @Override
@@ -1696,6 +1853,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 out.writeOptionalLong(shardSizeInBytesForecast);
             }
             eventIngestedRange.writeTo(out);
+            if (out.getTransportVersion().onOrAfter(TransportVersions.INDEX_RESHARDING_METADATA)) {
+                out.writeOptionalWriteable(reshardingMetadata);
+            }
         }
 
         @Override
@@ -1728,6 +1888,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             builder.stats(stats);
             builder.indexWriteLoadForecast(indexWriteLoadForecast);
             builder.shardSizeInBytesForecast(shardSizeInBytesForecast);
+            builder.reshardingMetadata(reshardingMetadata);
             return builder.build(true);
         }
     }
@@ -1799,6 +1960,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             builder.shardSizeInBytesForecast(in.readOptionalLong());
         }
         builder.eventIngestedRange(IndexLongFieldRange.readFrom(in));
+        if (in.getTransportVersion().onOrAfter(TransportVersions.INDEX_RESHARDING_METADATA)) {
+            builder.reshardingMetadata(in.readOptionalWriteable(IndexReshardingMetadata::new));
+        }
         return builder.build(true);
     }
 
@@ -1847,11 +2011,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             out.writeOptionalDouble(writeLoadForecast);
             out.writeOptionalLong(shardSizeInBytesForecast);
         }
-        if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_15_0)) {
-            eventIngestedRange.writeTo(out);
-        } else {
-            assert eventIngestedRange == IndexLongFieldRange.UNKNOWN
-                : "eventIngestedRange should be UNKNOWN until all nodes are on the new version but is " + eventIngestedRange;
+        eventIngestedRange.writeTo(out);
+        if (out.getTransportVersion().onOrAfter(TransportVersions.INDEX_RESHARDING_METADATA)) {
+            out.writeOptionalWriteable(reshardingMetadata);
         }
     }
 
@@ -1905,6 +2067,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private IndexMetadataStats stats = null;
         private Double indexWriteLoadForecast = null;
         private Long shardSizeInBytesForecast = null;
+        private IndexReshardingMetadata reshardingMetadata = null;
 
         public Builder(String index) {
             this.index = index;
@@ -1940,6 +2103,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.stats = indexMetadata.stats;
             this.indexWriteLoadForecast = indexMetadata.writeLoadForecast;
             this.shardSizeInBytesForecast = indexMetadata.shardSizeInBytesForecast;
+            this.reshardingMetadata = indexMetadata.reshardingMetadata;
         }
 
         public Builder index(String index) {
@@ -1949,6 +2113,36 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
         public Builder numberOfShards(int numberOfShards) {
             settings = Settings.builder().put(settings).put(SETTING_NUMBER_OF_SHARDS, numberOfShards).build();
+            return this;
+        }
+
+        /**
+         * Builder to create IndexMetadata that has an increased shard count (used for re-shard).
+         * The new shard count must be a multiple of the original shardcount as well as a factor
+         * of routingNumShards.
+         * We do not support shrinking the shard count.
+         * @param targetShardCount   target shard count after resharding
+         */
+        public Builder reshardAddShards(int targetShardCount) {
+            final int sourceNumShards = numberOfShards();
+            if (targetShardCount % sourceNumShards != 0) {
+                throw new IllegalArgumentException(
+                    "New shard count ["
+                        + targetShardCount
+                        + "] should be a multiple"
+                        + " of current shard count ["
+                        + sourceNumShards
+                        + "] for ["
+                        + index
+                        + "]"
+                );
+            }
+            settings = Settings.builder().put(settings).put(SETTING_NUMBER_OF_SHARDS, targetShardCount).build();
+            var newPrimaryTerms = new long[targetShardCount];
+            Arrays.fill(newPrimaryTerms, this.primaryTerms.length, newPrimaryTerms.length, SequenceNumbers.UNASSIGNED_PRIMARY_TERM);
+            System.arraycopy(primaryTerms, 0, newPrimaryTerms, 0, this.primaryTerms.length);
+            primaryTerms = newPrimaryTerms;
+            routingNumShards = MetadataCreateIndexService.getIndexNumberOfRoutingShards(settings, sourceNumShards, this.routingNumShards);
             return this;
         }
 
@@ -2051,6 +2245,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
         public Builder removeAllAliases() {
             aliases.clear();
+            return this;
+        }
+
+        public Builder putCustom(Map<String, ? extends Map<String, String>> customMetadata) {
+            customMetadata.forEach(this::putCustom);
             return this;
         }
 
@@ -2196,6 +2395,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return this;
         }
 
+        public Builder reshardingMetadata(IndexReshardingMetadata reshardingMetadata) {
+            this.reshardingMetadata = reshardingMetadata;
+            return this;
+        }
+
         public IndexMetadata build() {
             return build(false);
         }
@@ -2294,6 +2498,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             }
 
             final List<String> routingPaths = INDEX_ROUTING_PATH.get(settings);
+            final List<String> dimensions = INDEX_DIMENSIONS.get(settings);
 
             final String uuid = settings.get(SETTING_INDEX_UUID, INDEX_UUID_NA_VALUE);
 
@@ -2373,6 +2578,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 getRoutingNumShards(),
                 routingPartitionSize,
                 routingPaths,
+                dimensions,
                 waitForActiveShards,
                 rolloverInfos.build(),
                 isSystem,
@@ -2395,7 +2601,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 SETTING_INDEX_VERSION_COMPATIBILITY.get(settings),
                 stats,
                 indexWriteLoadForecast,
-                shardSizeInBytesForecast
+                shardSizeInBytesForecast,
+                reshardingMetadata
             );
         }
 
@@ -2535,6 +2742,12 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 builder.endObject();
             }
 
+            if (indexMetadata.reshardingMetadata != null) {
+                builder.startObject(KEY_RESHARDING);
+                indexMetadata.reshardingMetadata.toXContent(builder, params);
+                builder.endObject();
+            }
+
             builder.endObject();
         }
 
@@ -2620,6 +2833,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                             while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
                                 builder.putInferenceField(InferenceFieldMetadata.fromXContent(parser));
                             }
+                            break;
+                        case KEY_RESHARDING:
+                            builder.reshardingMetadata(IndexReshardingMetadata.fromXContent(parser));
                             break;
                         default:
                             // assume it's custom index metadata
@@ -2886,7 +3102,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * Returns the number of shards that should be used for routing. This basically defines the hash space we use in
      * {@link IndexRouting#indexShard} to route documents
      * to shards based on their ID or their specific routing value. The default value is {@link #getNumberOfShards()}. This value only
-     * changes if and index is shrunk.
+     * changes if an index is shrunk.
      */
     public int getRoutingNumShards() {
         return routingNumShards;
@@ -2906,7 +3122,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @param shardId the id of the target shard to split into
      * @param sourceIndexMetadata the source index metadata
      * @param numTargetShards the total number of shards in the target index
-     * @return a the source shard ID to split off from
+     * @return the source shard ID to split off from
      */
     public static ShardId selectSplitShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
         int numSourceShards = sourceIndexMetadata.getNumberOfShards();
@@ -2942,7 +3158,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return new ShardId(sourceIndexMetadata.getIndex(), shardId);
     }
 
-    private static void assertSplitMetadata(int numSourceShards, int numTargetShards, IndexMetadata sourceIndexMetadata) {
+    public static void assertSplitMetadata(int numSourceShards, int numTargetShards, IndexMetadata sourceIndexMetadata) {
         if (numSourceShards > numTargetShards) {
             throw new IllegalArgumentException(
                 "the number of source shards ["

@@ -677,7 +677,12 @@ public class SystemResourceSnapshotIT extends AbstractSnapshotIntegTestCase {
 
         // And make sure they both have aliases
         final String systemIndexAlias = SystemIndexTestPlugin.SYSTEM_INDEX_NAME + "-alias";
-        assertAcked(indicesAdmin().prepareAliases().addAlias(systemIndexName, systemIndexAlias).addAlias(regularIndex, regularAlias).get());
+        assertAcked(
+            indicesAdmin().prepareAliases(TEST_REQUEST_TIMEOUT, TEST_REQUEST_TIMEOUT)
+                .addAlias(systemIndexName, systemIndexAlias)
+                .addAlias(regularIndex, regularAlias)
+                .get()
+        );
 
         // run a snapshot including global state
         CreateSnapshotResponse createSnapshotResponse = clusterAdmin().prepareCreateSnapshot(TEST_REQUEST_TIMEOUT, REPO_NAME, "test-snap")
@@ -720,7 +725,7 @@ public class SystemResourceSnapshotIT extends AbstractSnapshotIntegTestCase {
         // And make sure they both have aliases
         final String systemDataStreamAlias = SystemDataStreamTestPlugin.SYSTEM_DATASTREAM_NAME + "-alias";
         assertAcked(
-            indicesAdmin().prepareAliases()
+            indicesAdmin().prepareAliases(TEST_REQUEST_TIMEOUT, TEST_REQUEST_TIMEOUT)
                 .addAlias(regularIndex, regularAlias)
                 .addAlias(SystemDataStreamTestPlugin.SYSTEM_DATASTREAM_NAME, systemDataStreamAlias, true)
                 .get()

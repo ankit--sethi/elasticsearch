@@ -13,19 +13,20 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.query.QueryShardException;
 import org.elasticsearch.xpack.esql.VerificationException;
 import org.elasticsearch.xpack.esql.action.AbstractEsqlIntegTestCase;
-import org.elasticsearch.xpack.esql.action.EsqlCapabilities;
 import org.junit.Before;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.elasticsearch.xpack.esql.plugin.MatchFunctionIT.createAndPopulateLookupIndex;
 import static org.hamcrest.CoreMatchers.containsString;
 
 public class QueryStringIT extends AbstractEsqlIntegTestCase {
 
     @Before
     public void setupIndex() {
-        createAndPopulateIndex();
+        createAndPopulateIndex(this::ensureYellow);
     }
 
     public void testSimpleQueryString() {
@@ -64,7 +65,7 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
             """;
 
         var error = expectThrows(VerificationException.class, () -> run(query));
-        assertThat(error.getMessage(), containsString("[QSTR] function is only supported in WHERE commands"));
+        assertThat(error.getMessage(), containsString("[QSTR] function is only supported in WHERE and STATS commands"));
     }
 
     public void testInvalidQueryStringEof() {
@@ -92,7 +93,7 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
         );
     }
 
-    private void createAndPopulateIndex() {
+    static void createAndPopulateIndex(Consumer<String[]> ensureYellow) {
         var indexName = "test";
         var client = client().admin().indices();
         var CreateRequest = client.prepareCreate(indexName)
@@ -136,11 +137,14 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
             )
             .setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE)
             .get();
-        ensureYellow(indexName);
+
+        var lookupIndexName = "test_lookup";
+        createAndPopulateLookupIndex(client, lookupIndexName);
+
+        ensureYellow.accept(new String[] { indexName, lookupIndexName });
     }
 
     public void testWhereQstrWithScoring() {
-        assumeTrue("'METADATA _score' is disabled", EsqlCapabilities.Cap.METADATA_SCORE.isEnabled());
         var query = """
             FROM test
             METADATA _score
@@ -165,7 +169,6 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
     }
 
     public void testWhereQstrWithScoringSorted() {
-        assumeTrue("'METADATA _score' is disabled", EsqlCapabilities.Cap.METADATA_SCORE.isEnabled());
         var query = """
             FROM test
             METADATA _score
@@ -191,7 +194,6 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
     }
 
     public void testWhereQstrWithScoringNoSort() {
-        assumeTrue("'METADATA _score' is disabled", EsqlCapabilities.Cap.METADATA_SCORE.isEnabled());
         var query = """
             FROM test
             METADATA _score
@@ -215,7 +217,6 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
     }
 
     public void testWhereQstrWithNonPushableAndScoring() {
-        assumeTrue("'METADATA _score' is disabled", EsqlCapabilities.Cap.METADATA_SCORE.isEnabled());
         var query = """
             FROM test
             METADATA _score
@@ -232,5 +233,16 @@ public class QueryStringIT extends AbstractEsqlIntegTestCase {
             assertColumnTypes(resp.columns(), List.of("integer", "double"));
             assertValuesInAnyOrder(resp.values(), List.of(List.of(5, 1.0), List.of(4, 1.0)));
         }
+    }
+
+    public void testWhereQstrWithLookupJoin() {
+        var query = """
+            FROM test
+            | LOOKUP JOIN test_lookup ON id
+            | WHERE id > 0 AND QSTR("lookup_content: fox")
+            """;
+
+        var error = expectThrows(VerificationException.class, () -> run(query));
+        assertThat(error.getMessage(), containsString("line 3:3: [QSTR] function cannot be used after LOOKUP"));
     }
 }

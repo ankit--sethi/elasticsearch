@@ -24,10 +24,14 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.time.DateUtils;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.FeatureFlag;
+import org.elasticsearch.core.Booleans;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.mapper.IgnoredSourceFieldMapper;
 import org.elasticsearch.index.mapper.Mapper;
+import org.elasticsearch.index.mapper.SeqNoFieldMapper;
 import org.elasticsearch.index.mapper.SourceFieldMapper;
+import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.indices.recovery.RecoverySettings;
 import org.elasticsearch.ingest.IngestService;
@@ -39,6 +43,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -301,7 +306,7 @@ public final class IndexSettings {
     static class RefreshIntervalValidator implements Setting.Validator<TimeValue> {
 
         static final String STATELESS_ALLOW_INDEX_REFRESH_INTERVAL_OVERRIDE = "es.stateless.allow.index.refresh_interval.override";
-        private static final boolean IS_OVERRIDE_ALLOWED = Boolean.parseBoolean(
+        private static final boolean IS_OVERRIDE_ALLOWED = Booleans.parseBoolean(
             System.getProperty(STATELESS_ALLOW_INDEX_REFRESH_INTERVAL_OVERRIDE, "false")
         );
 
@@ -612,21 +617,11 @@ public final class IndexSettings {
                 if (startTime.toEpochMilli() > value.toEpochMilli()) {
                     throw new IllegalArgumentException("index.time_series.end_time must be larger than index.time_series.start_time");
                 }
-
-                // The index.time_series.end_time setting can only be specified if the index.mode setting has been set to time_series
-                // This check here is specifically needed because in case of updating index settings the validation the gets executed
-                // in IndexSettings constructor when reading the index.mode setting doesn't get executed.
-                IndexMode indexMode = (IndexMode) settings.get(MODE);
-                if (indexMode != IndexMode.TIME_SERIES) {
-                    throw new IllegalArgumentException(
-                        "[" + TIME_SERIES_END_TIME.getKey() + "] requires [index.mode=" + IndexMode.TIME_SERIES + "]"
-                    );
-                }
             }
 
             @Override
             public Iterator<Setting<?>> settings() {
-                List<Setting<?>> settings = List.of(TIME_SERIES_START_TIME, MODE);
+                List<Setting<?>> settings = List.of(TIME_SERIES_START_TIME);
                 return settings.iterator();
             }
         },
@@ -672,6 +667,14 @@ public final class IndexSettings {
         Property.Final
     );
 
+    public static final boolean DOC_VALUES_SKIPPER = new FeatureFlag("doc_values_skipper").isEnabled();
+    public static final Setting<Boolean> USE_DOC_VALUES_SKIPPER = Setting.boolSetting(
+        "index.mapping.use_doc_values_skipper",
+        false,
+        Property.IndexScope,
+        Property.Final
+    );
+
     /**
      * The {@link IndexMode "mode"} of the index.
      */
@@ -713,7 +716,19 @@ public final class IndexSettings {
 
     public static final Setting<Boolean> RECOVERY_USE_SYNTHETIC_SOURCE_SETTING = Setting.boolSetting(
         "index.recovery.use_synthetic_source",
-        false,
+        settings -> {
+            boolean isNewIndexVersion = SETTING_INDEX_VERSION_CREATED.get(settings)
+                .onOrAfter(IndexVersions.USE_SYNTHETIC_SOURCE_FOR_RECOVERY_BY_DEFAULT);
+            boolean isIndexVersionInBackportRange = SETTING_INDEX_VERSION_CREATED.get(settings)
+                .between(IndexVersions.USE_SYNTHETIC_SOURCE_FOR_RECOVERY_BY_DEFAULT_BACKPORT, IndexVersions.UPGRADE_TO_LUCENE_10_0_0);
+
+            boolean useSyntheticRecoverySource = isNewIndexVersion || isIndexVersionInBackportRange;
+            return String.valueOf(
+                useSyntheticRecoverySource
+                    && Objects.equals(INDEX_MAPPER_SOURCE_MODE_SETTING.get(settings), SourceFieldMapper.Mode.SYNTHETIC)
+            );
+
+        },
         new Setting.Validator<>() {
             @Override
             public void validate(Boolean value) {}
@@ -790,21 +805,47 @@ public final class IndexSettings {
 
     public static final Setting<Integer> IGNORE_ABOVE_SETTING = Setting.intSetting(
         "index.mapping.ignore_above",
-        IndexSettings::getIgnoreAboveDefaultValue,
+        settings -> String.valueOf(getIgnoreAboveDefaultValue(settings)),
         0,
         Integer.MAX_VALUE,
         Property.IndexScope,
         Property.ServerlessPublic
     );
 
-    private static String getIgnoreAboveDefaultValue(final Settings settings) {
-        if (IndexSettings.MODE.get(settings) == IndexMode.LOGSDB
-            && IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(settings).onOrAfter(IndexVersions.ENABLE_IGNORE_ABOVE_LOGSDB)) {
-            return "8191";
-        } else {
-            return String.valueOf(Integer.MAX_VALUE);
+    private static int getIgnoreAboveDefaultValue(final Settings settings) {
+        if (settings == null) {
+            return Mapper.IgnoreAbove.IGNORE_ABOVE_DEFAULT_VALUE;
         }
+        return Mapper.IgnoreAbove.getIgnoreAboveDefaultValue(
+            IndexSettings.MODE.get(settings),
+            IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(settings)
+        );
     }
+
+    public static final Setting<SeqNoFieldMapper.SeqNoIndexOptions> SEQ_NO_INDEX_OPTIONS_SETTING = Setting.enumSetting(
+        SeqNoFieldMapper.SeqNoIndexOptions.class,
+        settings -> {
+            final IndexMode indexMode = IndexSettings.MODE.get(settings);
+            if ((indexMode == IndexMode.LOGSDB || indexMode == IndexMode.TIME_SERIES)
+                && IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(settings).onOrAfter(IndexVersions.SEQ_NO_WITHOUT_POINTS)) {
+                return SeqNoFieldMapper.SeqNoIndexOptions.DOC_VALUES_ONLY.toString();
+            } else {
+                return SeqNoFieldMapper.SeqNoIndexOptions.POINTS_AND_DOC_VALUES.toString();
+            }
+        },
+        "index.seq_no.index_options",
+        value -> {},
+        Property.IndexScope,
+        Property.Final
+    );
+
+    public static final Setting<Boolean> INDEX_MAPPING_EXCLUDE_SOURCE_VECTORS_SETTING = Setting.boolSetting(
+        "index.mapping.exclude_source_vectors",
+        settings -> String.valueOf(SETTING_INDEX_VERSION_CREATED.get(settings).onOrAfter(IndexVersions.EXCLUDE_SOURCE_VECTORS_DEFAULT)),
+        Property.IndexScope,
+        Property.Final,
+        Property.ServerlessPublic
+    );
 
     private final Index index;
     private final IndexVersion version;
@@ -849,7 +890,6 @@ public final class IndexSettings {
     private final boolean logsdbRouteOnSortFields;
     private final boolean logsdbSortOnHostName;
     private final boolean logsdbAddHostNameField;
-
     private volatile long retentionLeaseMillis;
 
     /**
@@ -874,6 +914,8 @@ public final class IndexSettings {
     private volatile int maxTokenCount;
     private volatile int maxNgramDiff;
     private volatile int maxShingleDiff;
+    private volatile DenseVectorFieldMapper.FilterHeuristic hnswFilterHeuristic;
+    private volatile boolean earlyTermination;
     private volatile TimeValue searchIdleAfter;
     private volatile int maxAnalyzedOffset;
     private volatile boolean weightMatchesEnabled;
@@ -892,6 +934,7 @@ public final class IndexSettings {
     private final SourceFieldMapper.Mode indexMappingSourceMode;
     private final boolean recoverySourceEnabled;
     private final boolean recoverySourceSyntheticEnabled;
+    private final boolean useDocValuesSkipper;
 
     /**
      * The maximum number of refresh listeners allows on this shard.
@@ -908,6 +951,7 @@ public final class IndexSettings {
     private volatile int maxRegexLength;
 
     private final IndexRouting indexRouting;
+    private final SeqNoFieldMapper.SeqNoIndexOptions seqNoIndexOptions;
 
     /**
      * The default mode for storing source, for all mappers not overriding this setting.
@@ -1068,9 +1112,14 @@ public final class IndexSettings {
         logsdbAddHostNameField = scopedSettings.get(LOGSDB_ADD_HOST_NAME_FIELD);
         skipIgnoredSourceWrite = scopedSettings.get(IgnoredSourceFieldMapper.SKIP_IGNORED_SOURCE_WRITE_SETTING);
         skipIgnoredSourceRead = scopedSettings.get(IgnoredSourceFieldMapper.SKIP_IGNORED_SOURCE_READ_SETTING);
+        hnswFilterHeuristic = scopedSettings.get(DenseVectorFieldMapper.HNSW_FILTER_HEURISTIC);
+        earlyTermination = scopedSettings.get(DenseVectorFieldMapper.HNSW_EARLY_TERMINATION);
         indexMappingSourceMode = scopedSettings.get(INDEX_MAPPER_SOURCE_MODE_SETTING);
         recoverySourceEnabled = RecoverySettings.INDICES_RECOVERY_SOURCE_ENABLED_SETTING.get(nodeSettings);
-        recoverySourceSyntheticEnabled = scopedSettings.get(RECOVERY_USE_SYNTHETIC_SOURCE_SETTING);
+        recoverySourceSyntheticEnabled = DiscoveryNode.isStateless(nodeSettings) == false
+            && scopedSettings.get(RECOVERY_USE_SYNTHETIC_SOURCE_SETTING);
+        useDocValuesSkipper = DOC_VALUES_SKIPPER && scopedSettings.get(USE_DOC_VALUES_SKIPPER);
+        seqNoIndexOptions = scopedSettings.get(SEQ_NO_INDEX_OPTIONS_SETTING);
         if (recoverySourceSyntheticEnabled) {
             if (DiscoveryNode.isStateless(settings)) {
                 throw new IllegalArgumentException("synthetic recovery source is only allowed in stateful");
@@ -1178,6 +1227,8 @@ public final class IndexSettings {
             this::setSkipIgnoredSourceWrite
         );
         scopedSettings.addSettingsUpdateConsumer(IgnoredSourceFieldMapper.SKIP_IGNORED_SOURCE_READ_SETTING, this::setSkipIgnoredSourceRead);
+        scopedSettings.addSettingsUpdateConsumer(DenseVectorFieldMapper.HNSW_FILTER_HEURISTIC, this::setHnswFilterHeuristic);
+        scopedSettings.addSettingsUpdateConsumer(DenseVectorFieldMapper.HNSW_EARLY_TERMINATION, this::setHnswEarlyTermination);
     }
 
     private void setSearchIdleAfter(TimeValue searchIdleAfter) {
@@ -1777,6 +1828,10 @@ public final class IndexSettings {
         return recoverySourceSyntheticEnabled;
     }
 
+    public boolean useDocValuesSkipper() {
+        return useDocValuesSkipper;
+    }
+
     /**
      * The bounds for {@code @timestamp} on this index or
      * {@code null} if there are no bounds.
@@ -1791,5 +1846,29 @@ public final class IndexSettings {
      */
     public IndexRouting getIndexRouting() {
         return indexRouting;
+    }
+
+    /**
+     * The heuristic to utilize when executing filtered search on vectors indexed
+     * in HNSW format.
+     */
+    public DenseVectorFieldMapper.FilterHeuristic getHnswFilterHeuristic() {
+        return this.hnswFilterHeuristic;
+    }
+
+    private void setHnswFilterHeuristic(DenseVectorFieldMapper.FilterHeuristic heuristic) {
+        this.hnswFilterHeuristic = heuristic;
+    }
+
+    public boolean getHnswEarlyTermination() {
+        return this.earlyTermination;
+    }
+
+    private void setHnswEarlyTermination(boolean earlyTermination) {
+        this.earlyTermination = earlyTermination;
+    }
+
+    public SeqNoFieldMapper.SeqNoIndexOptions seqNoIndexOptions() {
+        return seqNoIndexOptions;
     }
 }

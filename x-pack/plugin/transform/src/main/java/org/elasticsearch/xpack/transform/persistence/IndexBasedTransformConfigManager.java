@@ -189,7 +189,7 @@ public class IndexBasedTransformConfigManager implements TransformConfigManager 
         // in some cases, the System Index gets reindexed and LATEST_INDEX_NAME is now an alias pointing to that reindexed index
         // this mostly likely happens after the SystemIndexMigrator ran
         // we need to check if the LATEST_INDEX_NAME is now an alias and points to the indexName
-        var metadata = clusterService.state().metadata();
+        var metadata = clusterService.state().projectState().metadata();
         var indicesForAlias = metadata.aliasedIndices(TransformInternalIndexConstants.LATEST_INDEX_NAME);
         var index = metadata.index(indexName);
         return index != null && indicesForAlias.contains(index.getIndex());

@@ -13,6 +13,10 @@ import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 
+import org.elasticsearch.compute.gen.argument.Argument;
+import org.elasticsearch.compute.gen.argument.FixedArgument;
+import org.elasticsearch.compute.gen.argument.StandardArgument;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -23,14 +27,18 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 
+import static org.elasticsearch.compute.gen.EvaluatorImplementer.baseRamBytesUsed;
 import static org.elasticsearch.compute.gen.Methods.buildFromFactory;
 import static org.elasticsearch.compute.gen.Methods.getMethod;
 import static org.elasticsearch.compute.gen.Types.ABSTRACT_CONVERT_FUNCTION_EVALUATOR;
 import static org.elasticsearch.compute.gen.Types.BLOCK;
 import static org.elasticsearch.compute.gen.Types.BYTES_REF;
+import static org.elasticsearch.compute.gen.Types.BYTES_REF_VECTOR_BUILDER;
 import static org.elasticsearch.compute.gen.Types.DRIVER_CONTEXT;
 import static org.elasticsearch.compute.gen.Types.EXPRESSION_EVALUATOR;
 import static org.elasticsearch.compute.gen.Types.EXPRESSION_EVALUATOR_FACTORY;
+import static org.elasticsearch.compute.gen.Types.INT_VECTOR;
+import static org.elasticsearch.compute.gen.Types.ORDINALS_BYTES_REF_VECTOR;
 import static org.elasticsearch.compute.gen.Types.SOURCE;
 import static org.elasticsearch.compute.gen.Types.VECTOR;
 import static org.elasticsearch.compute.gen.Types.blockType;
@@ -41,7 +49,7 @@ public class ConvertEvaluatorImplementer {
 
     private final TypeElement declarationType;
     private final EvaluatorImplementer.ProcessFunction processFunction;
-    private final String extraName;
+    private final boolean canProcessOrdinals;
     private final ClassName implementation;
     private final TypeName argumentType;
     private final List<TypeMirror> warnExceptions;
@@ -55,18 +63,21 @@ public class ConvertEvaluatorImplementer {
     ) {
         this.declarationType = (TypeElement) processFunction.getEnclosingElement();
         this.processFunction = new EvaluatorImplementer.ProcessFunction(types, processFunction, warnExceptions);
+        this.canProcessOrdinals = warnExceptions.isEmpty()
+            && this.processFunction.returnType().equals(BYTES_REF)
+            && this.processFunction.args.getFirst() instanceof StandardArgument s
+            && s.type().equals(BYTES_REF);
 
-        if (this.processFunction.args.getFirst() instanceof EvaluatorImplementer.StandardProcessFunctionArg == false) {
+        if (this.processFunction.args.getFirst() instanceof StandardArgument == false) {
             throw new IllegalArgumentException("first argument must be the field to process");
         }
         for (int a = 1; a < this.processFunction.args.size(); a++) {
-            if (this.processFunction.args.get(a) instanceof EvaluatorImplementer.FixedProcessFunctionArg == false) {
+            if (this.processFunction.args.get(a) instanceof FixedArgument == false) {
                 throw new IllegalArgumentException("fixed function args supported after the first");
                 // TODO support more function types when we need them
             }
         }
 
-        this.extraName = extraName;
         this.argumentType = TypeName.get(processFunction.getParameters().get(0).asType());
         this.warnExceptions = warnExceptions;
 
@@ -92,8 +103,9 @@ public class ConvertEvaluatorImplementer {
         builder.addJavadoc("This class is generated. Edit {@code " + getClass().getSimpleName() + "} instead.");
         builder.addModifiers(Modifier.PUBLIC, Modifier.FINAL);
         builder.superclass(ABSTRACT_CONVERT_FUNCTION_EVALUATOR);
+        builder.addField(baseRamBytesUsed(implementation));
 
-        for (EvaluatorImplementer.ProcessFunctionArg a : processFunction.args) {
+        for (Argument a : processFunction.args) {
             a.declareField(builder);
         }
         builder.addMethod(ctor());
@@ -102,8 +114,12 @@ public class ConvertEvaluatorImplementer {
         builder.addMethod(evalValue(true));
         builder.addMethod(evalBlock());
         builder.addMethod(evalValue(false));
+        if (canProcessOrdinals) {
+            builder.addMethod(evalOrdinals());
+        }
         builder.addMethod(processFunction.toStringMethod(implementation));
         builder.addMethod(processFunction.close());
+        builder.addMethod(processFunction.baseRamBytesUsed());
         builder.addType(factory());
         return builder.build();
     }
@@ -112,7 +128,7 @@ public class ConvertEvaluatorImplementer {
         MethodSpec.Builder builder = MethodSpec.constructorBuilder().addModifiers(Modifier.PUBLIC);
         builder.addParameter(SOURCE, "source");
         builder.addStatement("super(driverContext, source)");
-        for (EvaluatorImplementer.ProcessFunctionArg a : processFunction.args) {
+        for (Argument a : processFunction.args) {
             a.implementCtor(builder);
         }
         builder.addParameter(DRIVER_CONTEXT, "driverContext");
@@ -122,7 +138,7 @@ public class ConvertEvaluatorImplementer {
     private MethodSpec next() {
         MethodSpec.Builder builder = MethodSpec.methodBuilder("next").addAnnotation(Override.class).addModifiers(Modifier.PUBLIC);
         builder.returns(EXPRESSION_EVALUATOR);
-        builder.addStatement("return $N", ((EvaluatorImplementer.StandardProcessFunctionArg) processFunction.args.getFirst()).name());
+        builder.addStatement("return $N", ((StandardArgument) processFunction.args.getFirst()).name());
         return builder.build();
     }
 
@@ -132,6 +148,15 @@ public class ConvertEvaluatorImplementer {
 
         TypeName vectorType = vectorType(argumentType);
         builder.addStatement("$T vector = ($T) v", vectorType, vectorType);
+        if (canProcessOrdinals) {
+            builder.addStatement("$T ordinals = vector.asOrdinals()", ORDINALS_BYTES_REF_VECTOR);
+            builder.beginControlFlow("if (ordinals != null)");
+            {
+                builder.addStatement("return evalOrdinals(ordinals)");
+            }
+            builder.endControlFlow();
+        }
+
         builder.addStatement("int positionCount = v.getPositionCount()");
 
         String scratchPadName = argumentType.equals(BYTES_REF) ? "scratchPad" : null;
@@ -296,6 +321,31 @@ public class ConvertEvaluatorImplementer {
         }
         pattern.append(")");
         builder.addStatement(pattern.toString(), args.toArray());
+        return builder.build();
+    }
+
+    private MethodSpec evalOrdinals() {
+        MethodSpec.Builder builder = MethodSpec.methodBuilder("evalOrdinals").addModifiers(Modifier.PRIVATE);
+        builder.addParameter(ORDINALS_BYTES_REF_VECTOR, "v").returns(BLOCK);
+
+        builder.addStatement("int positionCount = v.getDictionaryVector().getPositionCount()");
+        builder.addStatement("BytesRef scratchPad = new BytesRef()");
+        builder.beginControlFlow(
+            "try ($T builder = driverContext.blockFactory().newBytesRefVectorBuilder(positionCount))",
+            BYTES_REF_VECTOR_BUILDER
+        );
+        {
+            builder.beginControlFlow("for (int p = 0; p < positionCount; p++)");
+            {
+                builder.addStatement("builder.appendBytesRef($N)", evalValueCall("v.getDictionaryVector()", "p", "scratchPad"));
+            }
+            builder.endControlFlow();
+            builder.addStatement("$T ordinals = v.getOrdinalsVector()", INT_VECTOR);
+            builder.addStatement("ordinals.incRef()");
+            builder.addStatement("return new $T(ordinals, builder.build()).asBlock()", ORDINALS_BYTES_REF_VECTOR);
+        }
+        builder.endControlFlow();
+
         return builder.build();
     }
 

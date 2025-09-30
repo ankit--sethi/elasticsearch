@@ -13,6 +13,7 @@ import org.elasticsearch.cluster.metadata.ComponentTemplate;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.indices.system.SystemResourceDescriptor;
 
@@ -111,8 +112,18 @@ public class SystemDataStreamDescriptor implements SystemResourceDescriptor {
      * @param metadata Metadata in which to look for indices
      * @return List of names of backing indices
      */
+    @Deprecated
     public List<String> getBackingIndexNames(Metadata metadata) {
-        DataStream dataStream = metadata.dataStreams().get(dataStreamName);
+        return getBackingIndexNames(metadata.getProject());
+    }
+
+    /**
+     * Retrieve backing indices for this system data stream
+     * @param projectMetadata Project metadata in which to look for indices
+     * @return List of names of backing indices
+     */
+    public List<String> getBackingIndexNames(ProjectMetadata projectMetadata) {
+        DataStream dataStream = projectMetadata.dataStreams().get(dataStreamName);
         if (dataStream == null) {
             return Collections.emptyList();
         }
@@ -120,7 +131,7 @@ public class SystemDataStreamDescriptor implements SystemResourceDescriptor {
     }
 
     @Override
-    public List<String> getMatchingIndices(Metadata metadata) {
+    public List<String> getMatchingIndices(ProjectMetadata metadata) {
         return getBackingIndexNames(metadata);
     }
 

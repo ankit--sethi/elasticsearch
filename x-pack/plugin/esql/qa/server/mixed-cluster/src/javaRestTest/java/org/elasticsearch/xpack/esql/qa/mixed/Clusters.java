@@ -21,8 +21,10 @@ public class Clusters {
             .withNode(node -> node.version(oldVersion))
             .withNode(node -> node.version(Version.CURRENT))
             .setting("xpack.security.enabled", "false")
-            .setting("xpack.license.self_generated.type", "trial")
-            .setting("cluster.routing.rebalance.enable", "none"); // disable relocation until we have retry in ESQL;
+            .setting("xpack.license.self_generated.type", "trial");
+        if (supportRetryOnShardFailures(oldVersion) == false) {
+            cluster.setting("cluster.routing.rebalance.enable", "none");
+        }
         if (oldVersion.before(Version.fromString("8.18.0"))) {
             cluster.jvmArg("-da:org.elasticsearch.index.mapper.DocumentMapper");
             cluster.jvmArg("-da:org.elasticsearch.index.mapper.MapperService");
@@ -30,4 +32,8 @@ public class Clusters {
         return cluster.build();
     }
 
+    private static boolean supportRetryOnShardFailures(Version version) {
+        return version.onOrAfter(Version.fromString("9.1.0"))
+            || (version.onOrAfter(Version.fromString("8.19.0")) && version.before(Version.fromString("9.0.0")));
+    }
 }

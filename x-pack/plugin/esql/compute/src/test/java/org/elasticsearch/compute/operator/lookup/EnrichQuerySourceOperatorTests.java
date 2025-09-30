@@ -32,6 +32,7 @@ import org.elasticsearch.compute.data.DocBlock;
 import org.elasticsearch.compute.data.IntBlock;
 import org.elasticsearch.compute.data.IntVector;
 import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.compute.lucene.LuceneSourceOperatorTests;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.Warnings;
 import org.elasticsearch.core.IOUtils;
@@ -41,6 +42,7 @@ import org.elasticsearch.index.mapper.KeywordFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
+import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.test.ESTestCase;
 import org.junit.After;
 import org.junit.Before;
@@ -83,7 +85,7 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
             var inputTerms = makeTermsBlock(List.of(List.of("b2"), List.of("c1", "a2"), List.of("z2"), List.of(), List.of("a3"), List.of()))
         ) {
             MappedFieldType uidField = new KeywordFieldMapper.KeywordFieldType("uid");
-            QueryList queryList = QueryList.rawTermQueryList(uidField, directoryData.searchExecutionContext, inputTerms);
+            QueryList queryList = QueryList.rawTermQueryList(uidField, directoryData.searchExecutionContext, AliasFilter.EMPTY, inputTerms);
             assertThat(queryList.getPositionCount(), equalTo(6));
             assertThat(queryList.getQuery(0), equalTo(new TermQuery(new Term("uid", new BytesRef("b2")))));
             assertThat(queryList.getQuery(1), equalTo(new TermInSetQuery("uid", List.of(new BytesRef("c1"), new BytesRef("a2")))));
@@ -99,13 +101,13 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
             // 3 -> [] -> []
             // 4 -> [a3] -> [3]
             // 5 -> [] -> []
-            var warnings = Warnings.createWarnings(DriverContext.WarningsMode.IGNORE, 0, 0, "test enrich");
             EnrichQuerySourceOperator queryOperator = new EnrichQuerySourceOperator(
                 blockFactory,
                 128,
                 queryList,
-                directoryData.reader,
-                warnings
+
+                new LuceneSourceOperatorTests.MockShardContext(directoryData.reader),
+                warnings()
             );
             Page page = queryOperator.getOutput();
             assertNotNull(page);
@@ -154,15 +156,19 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
         }).toList();
 
         try (var directoryData = makeDirectoryWith(directoryTermsList); var inputTerms = makeTermsBlock(inputTermsList)) {
-            var queryList = QueryList.rawTermQueryList(directoryData.field, directoryData.searchExecutionContext, inputTerms);
+            var queryList = QueryList.rawTermQueryList(
+                directoryData.field,
+                directoryData.searchExecutionContext,
+                AliasFilter.EMPTY,
+                inputTerms
+            );
             int maxPageSize = between(1, 256);
-            var warnings = Warnings.createWarnings(DriverContext.WarningsMode.IGNORE, 0, 0, "test enrich");
             EnrichQuerySourceOperator queryOperator = new EnrichQuerySourceOperator(
                 blockFactory,
                 maxPageSize,
                 queryList,
-                directoryData.reader,
-                warnings
+                new LuceneSourceOperatorTests.MockShardContext(directoryData.reader),
+                warnings()
             );
             Map<Integer, Set<Integer>> actualPositions = new HashMap<>();
             while (queryOperator.isFinished() == false) {
@@ -192,8 +198,12 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
                 List.of(List.of("b2"), List.of("c1", "a2"), List.of("z2"), List.of(), List.of("a3"), List.of("a3", "a2", "z2", "xx"))
             )
         ) {
-            QueryList queryList = QueryList.rawTermQueryList(directoryData.field, directoryData.searchExecutionContext, inputTerms)
-                .onlySingleValues();
+            QueryList queryList = QueryList.rawTermQueryList(
+                directoryData.field,
+                directoryData.searchExecutionContext,
+                AliasFilter.EMPTY,
+                inputTerms
+            ).onlySingleValues(warnings(), "multi-value found");
             // pos -> terms -> docs
             // -----------------------------
             // 0 -> [b2] -> []
@@ -202,13 +212,12 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
             // 3 -> [] -> []
             // 4 -> [a3] -> [3]
             // 5 -> [a3, a2, z2, xx] -> []
-            var warnings = Warnings.createWarnings(DriverContext.WarningsMode.IGNORE, 0, 0, "test lookup");
             EnrichQuerySourceOperator queryOperator = new EnrichQuerySourceOperator(
                 blockFactory,
                 128,
                 queryList,
-                directoryData.reader,
-                warnings
+                new LuceneSourceOperatorTests.MockShardContext(directoryData.reader),
+                warnings()
             );
             Page page = queryOperator.getOutput();
             assertNotNull(page);
@@ -220,12 +229,20 @@ public class EnrichQuerySourceOperatorTests extends ESTestCase {
             assertThat(BlockUtils.toJavaObject(positions, 0), equalTo(4));
             page.releaseBlocks();
             assertTrue(queryOperator.isFinished());
+            assertWarnings(
+                "Line -1:-1: evaluation of [test] failed, treating result as null. Only first 20 failures recorded.",
+                "Line -1:-1: java.lang.IllegalArgumentException: multi-value found"
+            );
         }
     }
 
     private static IntVector getDocVector(Page page, int blockIndex) {
         DocBlock doc = page.getBlock(blockIndex);
         return doc.asVector().docs();
+    }
+
+    private static Warnings warnings() {
+        return Warnings.createWarnings(DriverContext.WarningsMode.COLLECT, -1, -1, "test");
     }
 
     private record DirectoryData(

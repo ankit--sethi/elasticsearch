@@ -27,7 +27,7 @@ public class SourceModeRollingUpgradeIT extends AbstractRollingUpgradeTestCase {
     }
 
     public void testConfigureStoredSourceBeforeIndexCreationLegacy() throws IOException {
-        assumeTrue("testing deprecation warnings and deprecation migrations", getOldClusterTestVersion().before("9.0.0"));
+        assumeFalse("testing deprecation warnings and deprecation migrations", oldClusterHasFeature("gte_v9.0.0"));
         String templateName = "logs@custom";
         if (isOldCluster()) {
             var storedSourceMapping = """
@@ -56,7 +56,7 @@ public class SourceModeRollingUpgradeIT extends AbstractRollingUpgradeTestCase {
     }
 
     public void testConfigureStoredSourceWhenIndexIsCreatedLegacy() throws IOException {
-        assumeTrue("testing deprecation warnings and deprecation migrations", getOldClusterTestVersion().before("9.0.0"));
+        assumeFalse("testing deprecation warnings and deprecation migrations", oldClusterHasFeature("gte_v9.0.0"));
         String templateName = "logs@custom";
         if (isOldCluster()) {
             var storedSourceMapping = """
@@ -86,7 +86,12 @@ public class SourceModeRollingUpgradeIT extends AbstractRollingUpgradeTestCase {
         Map<?, ?> issuesByTemplate = (Map<?, ?>) response.get("templates");
         assertThat(issuesByTemplate.containsKey(templateName), equalTo(true));
         var templateIssue = (Map<?, ?>) ((List<?>) issuesByTemplate.get(templateName)).getFirst();
-        assertThat(templateIssue.get("message"), equalTo(SourceFieldMapper.DEPRECATION_WARNING_TITLE));
-        assertThat(templateIssue.get("details"), equalTo(SourceFieldMapper.DEPRECATION_WARNING));
+        // Bwc compatible logic until backports are complete.
+        if (templateIssue.containsKey("details")) {
+            assertThat(templateIssue.get("message"), equalTo(SourceFieldMapper.DEPRECATION_WARNING_TITLE));
+            assertThat(templateIssue.get("details"), equalTo(SourceFieldMapper.DEPRECATION_WARNING));
+        } else {
+            assertThat(templateIssue.get("message"), equalTo(SourceFieldMapper.DEPRECATION_WARNING));
+        }
     }
 }

@@ -20,10 +20,6 @@ public final class Expressions {
 
     private Expressions() {}
 
-    public static NamedExpression wrapAsNamed(Expression exp) {
-        return exp instanceof NamedExpression ne ? ne : new Alias(exp.source(), exp.sourceText(), exp);
-    }
-
     public static List<Attribute> asAttributes(List<? extends NamedExpression> named) {
         if (named.isEmpty()) {
             return emptyList();
@@ -33,18 +29,6 @@ public final class Expressions {
             list.add(exp.toAttribute());
         }
         return list;
-    }
-
-    public static AttributeMap<Expression> asAttributeMap(List<? extends NamedExpression> named) {
-        if (named.isEmpty()) {
-            return AttributeMap.emptyAttributeMap();
-        }
-
-        AttributeMap.Builder<Expression> mapBuilder = AttributeMap.builder();
-        for (NamedExpression exp : named) {
-            mapBuilder.put(exp.toAttribute(), exp);
-        }
-        return mapBuilder.build();
     }
 
     public static boolean anyMatch(List<? extends Expression> exps, Predicate<? super Expression> predicate) {
@@ -117,19 +101,22 @@ public final class Expressions {
     }
 
     public static AttributeSet references(List<? extends Expression> exps) {
-        if (exps.isEmpty()) {
-            return AttributeSet.EMPTY;
+        if (exps.size() == 1) {
+            /*
+             * If we're getting the references from a single expression it's safe
+             * to just use its references. This is quite common. We use a ton of
+             * Aliases, for example. And every unary function can share its references
+             * with its input.
+             */
+            return exps.getFirst().references();
         }
-
-        var setBuilder = AttributeSet.builder();
-        for (Expression exp : exps) {
-            setBuilder.addAll(exp.references());
-        }
-        return setBuilder.build();
+        return AttributeSet.of(exps, Expression::references);
     }
 
     public static String name(Expression e) {
-        return e instanceof NamedExpression ne ? ne.name() : e.sourceText();
+        return e instanceof Attribute attr && attr.qualifier() != null ? attr.qualifiedName()
+            : e instanceof NamedExpression ne ? ne.name()
+            : e.sourceText();
     }
 
     /**

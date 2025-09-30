@@ -12,6 +12,7 @@ package org.elasticsearch.index.get;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.document.DocumentField;
@@ -19,9 +20,10 @@ import org.elasticsearch.common.lucene.uid.Versions;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndVersion;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
+import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.IndexSettings;
-import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.engine.Engine;
@@ -40,6 +42,7 @@ import org.elasticsearch.index.mapper.SourceLoader;
 import org.elasticsearch.index.shard.AbstractIndexShardComponent;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.MultiEngineGet;
+import org.elasticsearch.search.fetch.subphase.FetchFieldsContext;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.search.lookup.Source;
 import org.elasticsearch.search.lookup.SourceFilter;
@@ -56,6 +59,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
+import static org.elasticsearch.index.IndexSettings.INDEX_MAPPING_EXCLUDE_SOURCE_VECTORS_SETTING;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 
@@ -93,7 +97,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         FetchSourceContext fetchSourceContext,
         boolean forceSyntheticSource
     ) throws IOException {
-        return get(
+        return doGet(
             id,
             gFields,
             realtime,
@@ -107,7 +111,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         );
     }
 
-    public GetResult get(
+    public GetResult mget(
         String id,
         String[] gFields,
         boolean realtime,
@@ -117,7 +121,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         boolean forceSyntheticSource,
         MultiEngineGet mget
     ) throws IOException {
-        return get(
+        return doGet(
             id,
             gFields,
             realtime,
@@ -131,7 +135,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         );
     }
 
-    private GetResult get(
+    private GetResult doGet(
         String id,
         String[] gFields,
         boolean realtime,
@@ -144,21 +148,40 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         Function<Engine.Get, Engine.GetResult> engineGetOperator
     ) throws IOException {
         currentMetric.inc();
+        final long now = System.nanoTime();
         try {
-            long now = System.nanoTime();
-            GetResult getResult = innerGet(
-                id,
-                gFields,
-                realtime,
-                version,
-                versionType,
-                ifSeqNo,
-                ifPrimaryTerm,
-                fetchSourceContext,
-                forceSyntheticSource,
-                engineGetOperator
-            );
+            var engineGet = new Engine.Get(realtime, realtime, id).version(version)
+                .versionType(versionType)
+                .setIfSeqNo(ifSeqNo)
+                .setIfPrimaryTerm(ifPrimaryTerm);
 
+            final GetResult getResult;
+            try (Engine.GetResult get = engineGetOperator.apply(engineGet)) {
+                if (get == null) {
+                    getResult = null;
+                } else if (get.exists() == false) {
+                    getResult = new GetResult(
+                        shardId.getIndexName(),
+                        id,
+                        UNASSIGNED_SEQ_NO,
+                        UNASSIGNED_PRIMARY_TERM,
+                        -1,
+                        false,
+                        null,
+                        null,
+                        null
+                    );
+                } else {
+                    // break between having loaded it from translog (so we only have _source), and having a document to load
+                    getResult = innerGetFetch(
+                        id,
+                        gFields,
+                        normalizeFetchSourceContent(fetchSourceContext, gFields),
+                        get,
+                        forceSyntheticSource
+                    );
+                }
+            }
             if (getResult != null && getResult.isExists()) {
                 existsMetric.inc(System.nanoTime() - now);
             } else {
@@ -179,7 +202,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         FetchSourceContext fetchSourceContext,
         boolean forceSyntheticSource
     ) throws IOException {
-        return get(
+        return doGet(
             id,
             gFields,
             realtime,
@@ -193,20 +216,16 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         );
     }
 
-    public GetResult getForUpdate(String id, long ifSeqNo, long ifPrimaryTerm) throws IOException {
-        return getForUpdate(id, ifSeqNo, ifPrimaryTerm, new String[] { RoutingFieldMapper.NAME });
-    }
-
-    public GetResult getForUpdate(String id, long ifSeqNo, long ifPrimaryTerm, String[] gFields) throws IOException {
-        return get(
+    public GetResult getForUpdate(String id, long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) throws IOException {
+        return doGet(
             id,
-            gFields,
+            new String[] { RoutingFieldMapper.NAME },
             true,
             Versions.MATCH_ANY,
             VersionType.INTERNAL,
             ifSeqNo,
             ifPrimaryTerm,
-            FetchSourceContext.FETCH_SOURCE,
+            fetchSourceContext,
             false,
             indexShard::get
         );
@@ -259,35 +278,6 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         return FetchSourceContext.DO_NOT_FETCH_SOURCE;
     }
 
-    private GetResult innerGet(
-        String id,
-        String[] gFields,
-        boolean realtime,
-        long version,
-        VersionType versionType,
-        long ifSeqNo,
-        long ifPrimaryTerm,
-        FetchSourceContext fetchSourceContext,
-        boolean forceSyntheticSource,
-        Function<Engine.Get, Engine.GetResult> engineGetOperator
-    ) throws IOException {
-        fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
-        var engineGet = new Engine.Get(realtime, realtime, id).version(version)
-            .versionType(versionType)
-            .setIfSeqNo(ifSeqNo)
-            .setIfPrimaryTerm(ifPrimaryTerm);
-        try (Engine.GetResult get = engineGetOperator.apply(engineGet)) {
-            if (get == null) {
-                return null;
-            }
-            if (get.exists() == false) {
-                return new GetResult(shardId.getIndexName(), id, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, -1, false, null, null, null);
-            }
-            // break between having loaded it from translog (so we only have _source), and having a document to load
-            return innerGetFetch(id, gFields, fetchSourceContext, get, forceSyntheticSource);
-        }
-    }
-
     private GetResult innerGetFetch(
         String id,
         String[] storedFields,
@@ -298,16 +288,9 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         assert get.exists() : "method should only be called if document could be retrieved";
         // check first if stored fields to be loaded don't contain an object field
         MappingLookup mappingLookup = mapperService.mappingLookup();
-        final IndexVersion indexVersion = indexSettings.getIndexVersionCreated();
         final Set<String> storedFieldSet = new HashSet<>();
-        boolean hasInferenceMetadataFields = false;
         if (storedFields != null) {
             for (String field : storedFields) {
-                if (field.equals(InferenceMetadataFieldsMapper.NAME)
-                    && InferenceMetadataFieldsMapper.isEnabled(indexShard.mapperService().mappingLookup())) {
-                    hasInferenceMetadataFields = true;
-                    continue;
-                }
                 Mapper fieldMapper = mappingLookup.getMapper(field);
                 if (fieldMapper == null) {
                     if (mappingLookup.objectMappers().get(field) != null) {
@@ -322,12 +305,24 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         Map<String, DocumentField> documentFields = null;
         Map<String, DocumentField> metadataFields = null;
         DocIdAndVersion docIdAndVersion = get.docIdAndVersion();
-        var sourceFilter = fetchSourceContext.filter();
+
+        var res = maybeExcludeVectorFields(mappingLookup, indexSettings, fetchSourceContext, null);
+        if (res.v1() != fetchSourceContext) {
+            fetchSourceContext = res.v1();
+        }
+
+        if (mappingLookup.inferenceFields().isEmpty() == false
+            && shouldExcludeInferenceFieldsFromSource(indexSettings, fetchSourceContext) == false) {
+            storedFieldSet.add(InferenceMetadataFieldsMapper.NAME);
+        }
+
+        var sourceFilter = res.v2();
         SourceLoader loader = forceSyntheticSource
             ? new SourceLoader.Synthetic(
                 sourceFilter,
                 () -> mappingLookup.getMapping().syntheticFieldLoader(sourceFilter),
-                mapperMetrics.sourceFieldMetrics()
+                mapperMetrics.sourceFieldMetrics(),
+                mappingLookup.getMapping().ignoredSourceFormat()
             )
             : mappingLookup.newSourceLoader(sourceFilter, mapperMetrics.sourceFieldMetrics());
         StoredFieldLoader storedFieldLoader = buildStoredFieldLoader(storedFieldSet, fetchSourceContext, loader);
@@ -337,6 +332,9 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         } catch (IOException e) {
             throw new ElasticsearchException("Failed to get id [" + id + "]", e);
         }
+
+        final boolean supportDocValuesForIgnoredMetaField = indexSettings.getIndexVersionCreated()
+            .onOrAfter(IndexVersions.DOC_VALUES_FOR_IGNORED_META_FIELD);
 
         // put stored fields into result objects
         if (leafStoredFieldLoader.storedFields().isEmpty() == false) {
@@ -351,8 +349,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                 if (false == needed.contains(entry.getKey())) {
                     continue;
                 }
-                if (IgnoredFieldMapper.NAME.equals(entry.getKey())
-                    && indexVersion.onOrAfter(IndexVersions.DOC_VALUES_FOR_IGNORED_META_FIELD)) {
+                if (IgnoredFieldMapper.NAME.equals(entry.getKey()) && supportDocValuesForIgnoredMetaField) {
                     continue;
                 }
                 MappedFieldType ft = mapperService.fieldType(entry.getKey());
@@ -371,9 +368,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         // NOTE: when _ignored is requested via `stored_fields` we need to load it from doc values instead of loading it from stored fields.
         // The _ignored field used to be stored, but as a result of supporting aggregations on it, it moved from using a stored field to
         // using doc values.
-        if (indexVersion.onOrAfter(IndexVersions.DOC_VALUES_FOR_IGNORED_META_FIELD)
-            && storedFields != null
-            && Arrays.asList(storedFields).contains(IgnoredFieldMapper.NAME)) {
+        if (supportDocValuesForIgnoredMetaField && storedFields != null && Arrays.asList(storedFields).contains(IgnoredFieldMapper.NAME)) {
             final DocumentField ignoredDocumentField = loadIgnoredMetadataField(docIdAndVersion);
             if (ignoredDocumentField != null) {
                 if (metadataFields == null) {
@@ -393,7 +388,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                 source = source.filter(filter);
             }
 
-            if (hasInferenceMetadataFields) {
+            if (storedFieldSet.contains(InferenceMetadataFieldsMapper.NAME)) {
                 /**
                  * Adds the {@link InferenceMetadataFieldsMapper#NAME} field from the document fields
                  * to the original _source if it has been requested.
@@ -414,6 +409,93 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             documentFields,
             metadataFields
         );
+    }
+
+    /**
+     * Determines whether vector fields should be excluded from the source based on the {@link FetchSourceContext}.
+     * Returns {@code true} if vector fields are explicitly marked to be excluded and {@code false} otherwise.
+     */
+    public static boolean shouldExcludeVectorsFromSource(IndexSettings indexSettings, FetchSourceContext fetchSourceContext) {
+        var explicit = shouldExcludeVectorsFromSourceExplicit(fetchSourceContext);
+        return explicit != null ? explicit : INDEX_MAPPING_EXCLUDE_SOURCE_VECTORS_SETTING.get(indexSettings.getSettings());
+    }
+
+    private static Boolean shouldExcludeVectorsFromSourceExplicit(FetchSourceContext fetchSourceContext) {
+        return fetchSourceContext != null ? fetchSourceContext.excludeVectors() : null;
+    }
+
+    public static boolean shouldExcludeInferenceFieldsFromSource(IndexSettings indexSettings, FetchSourceContext fetchSourceContext) {
+        var explicit = shouldExcludeInferenceFieldsFromSourceExplicit(fetchSourceContext);
+        return explicit != null ? explicit : INDEX_MAPPING_EXCLUDE_SOURCE_VECTORS_SETTING.get(indexSettings.getSettings());
+    }
+
+    private static Boolean shouldExcludeInferenceFieldsFromSourceExplicit(FetchSourceContext fetchSourceContext) {
+        return fetchSourceContext != null ? fetchSourceContext.excludeInferenceFields() : null;
+    }
+
+    /**
+     * Returns a {@link SourceFilter} that excludes vector fields not associated with semantic text fields,
+     * unless vectors are explicitly requested to be included in the source.
+     * Returns {@code null} when vectors should not be filtered out.
+     */
+    public static Tuple<FetchSourceContext, SourceFilter> maybeExcludeVectorFields(
+        MappingLookup mappingLookup,
+        IndexSettings indexSettings,
+        FetchSourceContext fetchSourceContext,
+        FetchFieldsContext fetchFieldsContext
+    ) {
+        if (shouldExcludeVectorsFromSource(indexSettings, fetchSourceContext) == false) {
+            return Tuple.tuple(fetchSourceContext, null);
+        }
+        var fetchFieldsAut = fetchFieldsContext != null && fetchFieldsContext.fields().size() > 0
+            ? new CharacterRunAutomaton(
+                Regex.simpleMatchToAutomaton(fetchFieldsContext.fields().stream().map(f -> f.field).toArray(String[]::new))
+            )
+            : null;
+        var inferenceFieldsAut = mappingLookup.inferenceFields().size() > 0
+            ? new CharacterRunAutomaton(
+                Regex.simpleMatchToAutomaton(mappingLookup.inferenceFields().keySet().stream().map(f -> f + "*").toArray(String[]::new))
+            )
+            : null;
+
+        SourceFilter filter = fetchSourceContext != null ? fetchSourceContext.filter() : null;
+
+        List<String> lateExcludes = new ArrayList<>();
+        var excludes = mappingLookup.getFullNameToFieldType().values().stream().filter(MappedFieldType::isVectorEmbedding).filter(f -> {
+            // Keep the vector fields that are explicitly included and not explicitly excluded
+            if (filter != null && filter.isExplicitlyIncluded(f.name())) {
+                return filter.isPathFiltered(f.name(), false);
+            }
+            // Exclude the field specified by the `fields` option
+            if (fetchFieldsAut != null && fetchFieldsAut.run(f.name())) {
+                lateExcludes.add(f.name());
+                return false;
+            }
+            // Exclude vectors from semantic text fields, as they are processed separately
+            return inferenceFieldsAut == null || inferenceFieldsAut.run(f.name()) == false;
+        }).map(MappedFieldType::name).toList();
+
+        var sourceFilter = excludes.isEmpty() ? null : new SourceFilter(new String[] {}, excludes.toArray(String[]::new));
+        if (lateExcludes.size() > 0) {
+            /**
+             * Adds the vector field specified by the `fields` option to the excludes list of the fetch source context.
+             * This ensures that vector fields are available to sub-fetch phases, but excluded during the {@link FetchSourcePhase}.
+             */
+            if (fetchSourceContext != null && fetchSourceContext.excludes() != null) {
+                lateExcludes.addAll(Arrays.asList(fetchSourceContext.excludes()));
+            }
+            var newFetchSourceContext = fetchSourceContext == null
+                ? FetchSourceContext.of(true, false, null, lateExcludes.toArray(String[]::new))
+                : FetchSourceContext.of(
+                    fetchSourceContext.fetchSource(),
+                    fetchSourceContext.excludeVectors(),
+                    fetchSourceContext.excludeInferenceFields(),
+                    fetchSourceContext.includes(),
+                    lateExcludes.toArray(String[]::new)
+                );
+            return Tuple.tuple(newFetchSourceContext, sourceFilter);
+        }
+        return Tuple.tuple(fetchSourceContext, sourceFilter);
     }
 
     private static DocumentField loadIgnoredMetadataField(final DocIdAndVersion docIdAndVersion) throws IOException {

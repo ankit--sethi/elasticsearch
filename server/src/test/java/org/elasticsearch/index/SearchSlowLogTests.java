@@ -26,6 +26,7 @@ import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.test.ESSingleNodeTestCase;
 import org.elasticsearch.test.TestSearchContext;
@@ -93,7 +94,7 @@ public class SearchSlowLogTests extends ESSingleNodeTestCase {
             }
 
             @Override
-            public SearchShardTask getTask() {
+            public CancellableTask getTask() {
                 return super.getTask();
             }
         };
@@ -348,18 +349,18 @@ public class SearchSlowLogTests extends ESSingleNodeTestCase {
 
         metadata = newIndexMeta("index", Settings.builder().put(IndexMetadata.SETTING_VERSION_CREATED, IndexVersion.current()).build());
         settings.updateIndexMetadata(metadata);
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryTraceThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryDebugThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryInfoThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryWarnThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryTraceThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryDebugThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryInfoThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryWarnThreshold());
 
         settings = new IndexSettings(metadata, Settings.EMPTY);
         log = new SearchSlowLog(settings, mock(SlowLogFields.class));
 
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryTraceThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryDebugThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryInfoThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getQueryWarnThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryTraceThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryDebugThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryInfoThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getQueryWarnThreshold());
         try {
             settings.updateIndexMetadata(
                 newIndexMeta(
@@ -454,18 +455,18 @@ public class SearchSlowLogTests extends ESSingleNodeTestCase {
 
         metadata = newIndexMeta("index", Settings.builder().put(IndexMetadata.SETTING_VERSION_CREATED, IndexVersion.current()).build());
         settings.updateIndexMetadata(metadata);
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchTraceThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchDebugThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchInfoThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchWarnThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchTraceThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchDebugThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchInfoThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchWarnThreshold());
 
         settings = new IndexSettings(metadata, Settings.EMPTY);
         log = new SearchSlowLog(settings, mock(SlowLogFields.class));
 
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchTraceThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchDebugThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchInfoThreshold());
-        assertEquals(TimeValue.timeValueMillis(-1).nanos(), log.getFetchWarnThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchTraceThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchDebugThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchInfoThreshold());
+        assertEquals(TimeValue.MINUS_ONE.nanos(), log.getFetchWarnThreshold());
         try {
             settings.updateIndexMetadata(
                 newIndexMeta(

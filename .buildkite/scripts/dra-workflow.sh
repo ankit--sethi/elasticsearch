@@ -6,7 +6,7 @@ WORKFLOW="${DRA_WORKFLOW:-snapshot}"
 BRANCH="${BUILDKITE_BRANCH:-}"
 
 # Don't publish main branch to staging
-if [[ "$BRANCH" == *.x && "$WORKFLOW" == "staging" ]]; then
+if [[ ("$BRANCH" == "main" || "$BRANCH" == *.x) && "$WORKFLOW" == "staging" ]]; then
   exit 0
 fi
 
@@ -71,6 +71,7 @@ echo --- Building release artifacts
   buildReleaseArtifacts \
   exportCompressedDockerImages \
   exportDockerContexts \
+  :zipAggregation \
   :distribution:generateDependenciesReport
 
 PATH="$PATH:${JAVA_HOME}/bin" # Required by the following script

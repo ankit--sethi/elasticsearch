@@ -9,6 +9,7 @@
 
 package org.elasticsearch.repositories;
 
+import org.elasticsearch.TransportVersions;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.rest.RestStatus;
@@ -30,12 +31,18 @@ public class RepositoryConflictException extends RepositoryException {
 
     public RepositoryConflictException(StreamInput in) throws IOException {
         super(in);
-        in.readString();
+        if (in.getTransportVersion().before(TransportVersions.REMOVE_REPOSITORY_CONFLICT_MESSAGE)) {
+            // Deprecated `backwardCompatibleMessage` field
+            in.readString();
+        }
     }
 
     @Override
     protected void writeTo(StreamOutput out, Writer<Throwable> nestedExceptionsWriter) throws IOException {
         super.writeTo(out, nestedExceptionsWriter);
-        out.writeString("");
+        if (out.getTransportVersion().before(TransportVersions.REMOVE_REPOSITORY_CONFLICT_MESSAGE)) {
+            // Deprecated `backwardCompatibleMessage` field
+            out.writeString("");
+        }
     }
 }

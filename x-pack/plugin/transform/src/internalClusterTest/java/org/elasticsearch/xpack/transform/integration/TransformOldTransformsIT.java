@@ -294,7 +294,7 @@ public class TransformOldTransformsIT extends TransformSingleNodeTestCase {
         reindexRequest.setRefresh(true);
         client().execute(ReindexAction.INSTANCE, reindexRequest).actionGet();
 
-        var aliasesRequest = admin().indices().prepareAliases();
+        var aliasesRequest = admin().indices().prepareAliases(TimeValue.THIRTY_SECONDS, TimeValue.THIRTY_SECONDS);
         aliasesRequest.removeIndex(TransformInternalIndexConstants.LATEST_INDEX_NAME);
         aliasesRequest.addAlias(newSystemIndex, TransformInternalIndexConstants.LATEST_INDEX_NAME);
         aliasesRequest.execute().actionGet();

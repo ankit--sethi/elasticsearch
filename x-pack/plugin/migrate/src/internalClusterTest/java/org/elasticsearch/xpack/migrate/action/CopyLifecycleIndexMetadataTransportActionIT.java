@@ -18,11 +18,11 @@ import org.elasticsearch.action.admin.indices.template.put.TransportPutComposabl
 import org.elasticsearch.action.datastreams.CreateDataStreamAction;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.IndicesOptions;
-import org.elasticsearch.action.support.master.AcknowledgedRequest;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.LifecycleExecutionState;
-import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.ProjectId;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.cluster.metadata.Template;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.settings.Settings;
@@ -87,7 +87,8 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
         safeGet(indicesAdmin().create(new CreateIndexRequest(destIndex)));
 
         // verify source and dest date are actually different before copying
-        var settingsResponse = indicesAdmin().getSettings(new GetSettingsRequest().indices(sourceIndex, destIndex)).actionGet();
+        var settingsResponse = indicesAdmin().getSettings(new GetSettingsRequest(TEST_REQUEST_TIMEOUT).indices(sourceIndex, destIndex))
+            .actionGet();
         var indexToSettings = settingsResponse.getIndexToSettings();
         var sourceDate = indexToSettings.get(sourceIndex).getAsLong(IndexMetadata.SETTING_CREATION_DATE, 0L);
         {
@@ -100,7 +101,7 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
         // copy over the metadata
         copyMetadata(sourceIndex, destIndex);
 
-        var destDate = indicesAdmin().getSettings(new GetSettingsRequest().indices(sourceIndex, destIndex))
+        var destDate = indicesAdmin().getSettings(new GetSettingsRequest(TEST_REQUEST_TIMEOUT).indices(sourceIndex, destIndex))
             .actionGet()
             .getIndexToSettings()
             .get(destIndex)
@@ -138,9 +139,7 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
         // stop ILM so source does not change after copying metadata
         assertAcked(safeGet(client().execute(ILMActions.STOP, new StopILMRequest(TEST_REQUEST_TIMEOUT, TEST_REQUEST_TIMEOUT))));
         assertBusy(() -> {
-            var statusResponse = safeGet(
-                client().execute(GetStatusAction.INSTANCE, new AcknowledgedRequest.Plain(TEST_REQUEST_TIMEOUT, TEST_REQUEST_TIMEOUT))
-            );
+            var statusResponse = safeGet(client().execute(GetStatusAction.INSTANCE, new GetStatusAction.Request(TEST_REQUEST_TIMEOUT)));
             assertEquals(OperationMode.STOPPED, statusResponse.getMode());
         });
 
@@ -149,13 +148,13 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
             var destIndex = randomAlphaOfLength(20).toLowerCase(Locale.ROOT);
             safeGet(indicesAdmin().create(new CreateIndexRequest(destIndex)));
 
-            IndexMetadata destBefore = getClusterMetadata(destIndex).index(destIndex);
+            IndexMetadata destBefore = getProjectMetadata(destIndex).index(destIndex);
             assertNull(destBefore.getCustomData(LifecycleExecutionState.ILM_CUSTOM_METADATA_KEY));
 
             // copy over the metadata
             copyMetadata(backingIndex, destIndex);
 
-            var metadataAfter = getClusterMetadata(backingIndex, destIndex);
+            var metadataAfter = getProjectMetadata(backingIndex, destIndex);
             IndexMetadata sourceAfter = metadataAfter.index(backingIndex);
             IndexMetadata destAfter = metadataAfter.index(destIndex);
             assertNotNull(destAfter.getCustomData(LifecycleExecutionState.ILM_CUSTOM_METADATA_KEY));
@@ -184,7 +183,7 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
             var destIndex = randomAlphaOfLength(20).toLowerCase(Locale.ROOT);
             safeGet(indicesAdmin().create(new CreateIndexRequest(destIndex)));
 
-            var metadataBefore = getClusterMetadata(backingIndex, destIndex);
+            var metadataBefore = getProjectMetadata(backingIndex, destIndex);
             IndexMetadata source = metadataBefore.index(backingIndex);
             IndexMetadata destBefore = metadataBefore.index(destIndex);
 
@@ -200,7 +199,7 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
             copyMetadata(backingIndex, destIndex);
 
             // now rollover info should be equal
-            IndexMetadata destAfter = getClusterMetadata(destIndex).index(destIndex);
+            IndexMetadata destAfter = getProjectMetadata(destIndex).index(destIndex);
             assertEquals(source.getRolloverInfos(), destAfter.getRolloverInfos());
         }
     }
@@ -284,7 +283,9 @@ public class CopyLifecycleIndexMetadataTransportActionIT extends ESIntegTestCase
         return rolloverResponse.getNewIndex();
     }
 
-    private Metadata getClusterMetadata(String... indices) {
-        return safeGet(clusterAdmin().state(new ClusterStateRequest(TEST_REQUEST_TIMEOUT).indices(indices))).getState().metadata();
+    private ProjectMetadata getProjectMetadata(String... indices) {
+        return safeGet(clusterAdmin().state(new ClusterStateRequest(TEST_REQUEST_TIMEOUT).indices(indices))).getState()
+            .metadata()
+            .getProject(ProjectId.DEFAULT);
     }
 }

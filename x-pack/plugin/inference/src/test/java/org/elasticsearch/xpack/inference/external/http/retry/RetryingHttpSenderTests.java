@@ -715,6 +715,11 @@ public class RetryingHttpSenderTests extends ESTestCase {
             public String getRequestType() {
                 return "foo";
             }
+
+            @Override
+            public boolean canHandleStreamingResponses() {
+                return false;
+            }
         };
     }
 }

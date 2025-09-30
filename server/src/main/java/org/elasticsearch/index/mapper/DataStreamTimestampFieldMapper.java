@@ -49,7 +49,7 @@ public class DataStreamTimestampFieldMapper extends MetadataFieldMapper {
         static final TimestampFieldType INSTANCE = new TimestampFieldType();
 
         private TimestampFieldType() {
-            super(NAME, false, false, false, TextSearchInfo.NONE, Map.of());
+            super(NAME, false, false, false, Map.of());
         }
 
         @Override
@@ -139,7 +139,7 @@ public class DataStreamTimestampFieldMapper extends MetadataFieldMapper {
         }
 
         DateFieldMapper dateFieldMapper = (DateFieldMapper) mapper;
-        if (dateFieldMapper.fieldType().isIndexed() == false) {
+        if (dateFieldMapper.fieldType().isIndexed() == false && dateFieldMapper.fieldType().hasDocValuesSkipper() == false) {
             throw new IllegalArgumentException("data stream timestamp field [" + DEFAULT_PATH + "] is not indexed");
         }
         if (dateFieldMapper.fieldType().hasDocValues() == false) {

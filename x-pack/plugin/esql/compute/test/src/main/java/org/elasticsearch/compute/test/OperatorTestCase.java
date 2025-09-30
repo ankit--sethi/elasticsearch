@@ -23,6 +23,7 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.compute.data.Block;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.Page;
+import org.elasticsearch.compute.operator.AsyncOperator;
 import org.elasticsearch.compute.operator.Driver;
 import org.elasticsearch.compute.operator.DriverContext;
 import org.elasticsearch.compute.operator.DriverRunner;
@@ -46,7 +47,6 @@ import java.util.stream.LongStream;
 
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.in;
 
 /**
  * Base tests for {@link Operator}s that are not {@link SourceOperator} or {@link SinkOperator}.
@@ -97,11 +97,17 @@ public abstract class OperatorTestCase extends AnyOperatorTestCase {
      * asserting both that this throws a {@link CircuitBreakingException} and releases
      * all pages.
      */
-    public final void testSimpleCircuitBreaking() {
-        ByteSizeValue memoryLimitForSimple = enoughMemoryForSimple();
-        Operator.OperatorFactory simple = simple();
+    public void testSimpleCircuitBreaking() {
+        /*
+         * Build the input before building `simple` to handle the rare
+         * cases where `simple` need some state from the input - mostly
+         * this is ValuesSourceReaderOperator.
+         */
         DriverContext inputFactoryContext = driverContext();
         List<Page> input = CannedSourceOperator.collectPages(simpleInput(inputFactoryContext.blockFactory(), between(1_000, 10_000)));
+
+        ByteSizeValue memoryLimitForSimple = enoughMemoryForSimple();
+        Operator.OperatorFactory simple = simple(new SimpleOptions(true));
         try {
             ByteSizeValue limit = BreakerTestUtil.findBreakerLimit(memoryLimitForSimple, l -> runWithLimit(simple, input, l));
             ByteSizeValue testWithSize = ByteSizeValue.ofBytes(randomLongBetween(0, limit.getBytes()));
@@ -218,6 +224,7 @@ public abstract class OperatorTestCase extends AnyOperatorTestCase {
         var operator = simple().get(context);
         List<Page> results = drive(operator, input.iterator(), context);
         assertSimpleOutput(origInput, results);
+        assertOperatorStatus(operator, origInput, results);
         assertThat(context.breaker().getUsed(), equalTo(0L));
 
         // Release all result blocks. After this, all input blocks should be released as well, otherwise we have a leak.
@@ -240,17 +247,28 @@ public abstract class OperatorTestCase extends AnyOperatorTestCase {
      * Tests that finish then close without calling {@link Operator#getOutput} to
      * retrieve a potential last page, releases all memory.
      */
-    public void testSimpleFinishClose() throws Exception {
+    public void testSimpleFinishClose() {
         DriverContext driverContext = driverContext();
         List<Page> input = CannedSourceOperator.collectPages(simpleInput(driverContext.blockFactory(), 1));
-        assert input.size() == 1 : "Expected single page, got: " + input;
         // eventually, when driverContext always returns a tracking factory, we can enable this assertion
         // assertThat(driverContext.blockFactory().breaker().getUsed(), greaterThan(0L));
-        Page page = input.get(0);
         try (var operator = simple().get(driverContext)) {
             assert operator.needsInput();
-            operator.addInput(page);
+            for (Page page : input) {
+                if (operator.needsInput()) {
+                    operator.addInput(page);
+                } else {
+                    page.releaseBlocks();
+                }
+            }
             operator.finish();
+            // for async operator, we need to wait for async actions to finish.
+            if (operator instanceof AsyncOperator<?> || randomBoolean()) {
+                driverContext.finish();
+                PlainActionFuture<Void> waitForAsync = new PlainActionFuture<>();
+                driverContext.waitForAsyncActions(waitForAsync);
+                waitForAsync.actionGet(TimeValue.timeValueSeconds(30));
+            }
         }
     }
 

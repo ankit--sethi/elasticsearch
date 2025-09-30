@@ -25,6 +25,7 @@ import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
+import org.elasticsearch.cluster.metadata.ProjectId;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
@@ -116,7 +117,7 @@ public class EnterpriseGeoIpDownloaderIT extends ESIntegTestCase {
         final String sourceField = "ip";
         final String targetField = "ip-result";
 
-        startEnterpriseGeoIpDownloaderTask();
+        startEnterpriseGeoIpDownloaderTask(ProjectId.DEFAULT);
         configureMaxmindDatabase(MAXMIND_DATABASE_TYPE);
         configureIpinfoDatabase(IPINFO_DATABASE_TYPE);
         waitAround();
@@ -135,17 +136,17 @@ public class EnterpriseGeoIpDownloaderIT extends ESIntegTestCase {
             assertNotNull(returnedSource);
             Object targetFieldValue = returnedSource.get(targetField);
             assertNotNull(targetFieldValue);
-            assertThat(((Map<String, Object>) targetFieldValue).get("organization_name"), equalTo("Bredband2 AB"));
+            assertThat(((Map<String, Object>) targetFieldValue).get("city_name"), equalTo("Linköping"));
         });
         assertBusy(() -> {
             logger.info("Ingesting another test document");
-            String documentId = ingestDocument(indexName, iplocationPipelineName, sourceField, "12.10.66.1");
+            String documentId = ingestDocument(indexName, iplocationPipelineName, sourceField, "103.134.48.0");
             GetResponse getResponse = client().get(new GetRequest(indexName, documentId)).actionGet();
             Map<String, Object> returnedSource = getResponse.getSource();
             assertNotNull(returnedSource);
             Object targetFieldValue = returnedSource.get(targetField);
             assertNotNull(targetFieldValue);
-            assertThat(((Map<String, Object>) targetFieldValue).get("organization_name"), equalTo("OAKLAWN JOCKEY CLUB, INC."));
+            assertThat(((Map<String, Object>) targetFieldValue).get("organization_name"), equalTo("PT Nevigate Telekomunikasi Indonesia"));
         });
     }
 
@@ -171,9 +172,10 @@ public class EnterpriseGeoIpDownloaderIT extends ESIntegTestCase {
             );
     }
 
-    private void startEnterpriseGeoIpDownloaderTask() {
+    private void startEnterpriseGeoIpDownloaderTask(ProjectId projectId) {
         PersistentTasksService persistentTasksService = internalCluster().getInstance(PersistentTasksService.class);
-        persistentTasksService.sendStartRequest(
+        persistentTasksService.sendProjectStartRequest(
+            projectId,
             ENTERPRISE_GEOIP_DOWNLOADER,
             ENTERPRISE_GEOIP_DOWNLOADER,
             new EnterpriseGeoIpTask.EnterpriseGeoIpTaskParams(),

@@ -12,6 +12,8 @@ import org.elasticsearch.xpack.esql.CsvSpecReader.CsvTestCase;
 import org.elasticsearch.xpack.esql.qa.rest.EsqlSpecTestCase;
 import org.junit.ClassRule;
 
+import java.io.IOException;
+
 public class EsqlSpecIT extends EsqlSpecTestCase {
     @ClassRule
     public static ElasticsearchCluster cluster = Clusters.testCluster(spec -> spec.plugin("inference-service-test"));
@@ -21,16 +23,8 @@ public class EsqlSpecIT extends EsqlSpecTestCase {
         return cluster.getHttpAddresses();
     }
 
-    public EsqlSpecIT(
-        String fileName,
-        String groupName,
-        String testName,
-        Integer lineNumber,
-        CsvTestCase testCase,
-        String instructions,
-        Mode mode
-    ) {
-        super(fileName, groupName, testName, lineNumber, testCase, instructions, mode);
+    public EsqlSpecIT(String fileName, String groupName, String testName, Integer lineNumber, CsvTestCase testCase, String instructions) {
+        super(fileName, groupName, testName, lineNumber, testCase, instructions);
     }
 
     @Override
@@ -39,7 +33,7 @@ public class EsqlSpecIT extends EsqlSpecTestCase {
     }
 
     @Override
-    protected boolean supportsSourceFieldMapping() {
+    protected boolean supportsSourceFieldMapping() throws IOException {
         return false;
     }
 }

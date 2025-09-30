@@ -127,8 +127,8 @@ public abstract class AbstractPageMappingOperator implements Operator {
             this.rowsEmitted = rowsEmitted;
         }
 
-        protected Status(StreamInput in) throws IOException {
-            processNanos = in.getTransportVersion().onOrAfter(TransportVersions.V_8_14_0) ? in.readVLong() : 0;
+        public Status(StreamInput in) throws IOException {
+            processNanos = in.readVLong();
             pagesProcessed = in.readVInt();
             if (in.getTransportVersion().onOrAfter(TransportVersions.ESQL_PROFILE_ROWS_PROCESSED)) {
                 rowsReceived = in.readVLong();
@@ -141,9 +141,7 @@ public abstract class AbstractPageMappingOperator implements Operator {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_14_0)) {
-                out.writeVLong(processNanos);
-            }
+            out.writeVLong(processNanos);
             out.writeVInt(pagesProcessed);
             if (out.getTransportVersion().onOrAfter(TransportVersions.ESQL_PROFILE_ROWS_PROCESSED)) {
                 out.writeVLong(rowsReceived);
@@ -188,7 +186,10 @@ public abstract class AbstractPageMappingOperator implements Operator {
             if (builder.humanReadable()) {
                 builder.field("process_time", TimeValue.timeValueNanos(processNanos));
             }
-            return builder.field("pages_processed", pagesProcessed).field("rows_received", rowsReceived).field("rows_emitted", rowsEmitted);
+            builder.field("pages_processed", pagesProcessed);
+            builder.field("rows_received", rowsReceived);
+            builder.field("rows_emitted", rowsEmitted);
+            return builder;
         }
 
         @Override

@@ -11,78 +11,9 @@ apply plugin: 'elasticsearch.build'
 apply plugin: 'elasticsearch.publish'
 apply plugin: 'elasticsearch.internal-cluster-test'
 apply plugin: 'elasticsearch.internal-test-artifact'
-apply plugin: 'org.graalvm.buildtools.native'
-
-graalvmNative {
-  binaries.all {
-    // common options
-    verbose = true
-    buildArgs.add('--initialize-at-build-time=org.apache.lucene.util.RamUsageEstimator,org.fusesource.jansi')
-    buildArgs.add('--exact-reachability-metadata')
-    runtimeArgs.add('-XX:MissingRegistrationReportingMode=Warn')
-    //resources.autodetect()
-    buildArgs.addAll([
-      '-H:+UnlockExperimentalVMOptions',
-      '-H:IncludeResources=.*\\.properties',
-      '-H:IncludeResources=.*\\.xml',
-      //'-H:+ForeignAPISupport'
-    ])
-  }
-  binaries.main {
-    imageName = 'application'
-    mainClass = 'org.elasticsearch.bootstrap.Elasticsearch'
-    debug = true
-    sharedLibrary = false
-    resources.autodetect()
-    buildArgs.addAll(
-      //'--module-path', file('path/to/elasticsearch/lib').absolutePath, // Adjust this path
-      '--add-modules=jdk.net,jdk.management.agent,ALL-MODULE-PATH,jdk.incubator.vector',
-      //'--add-exports=java.base/org.elasticsearch.entitlement.bridge=org.elasticsearch.entitlement,java.logging,java.net.http,java.naming,jdk.net',
-      //'--patch-module=java.base=lib/entitlement-bridge/elasticsearch-entitlement-bridge-9.0.1-SNAPSHOT.jar', // Adjust this path
-      //'--enable-native-access=org.apache.lucene.core',
-      '--enable-native-access=ALL-UNNAMED',
-      //'--illegal-native-access=deny',
-      '--gc=serial', // Or "serial", "epsilon"
-      '-ea', // If you want runtime assertions
-      '-esa'
-    )
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../build/distribution/local/elasticsearch-9.0.1-SNAPSHOT/lib/tools/ansi-console/jansi-2.4.0.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../build/distribution/local/elasticsearch-9.0.1-SNAPSHOT/lib/tools/ansi-console/elasticsearch-ansi-console-9.0.1-SNAPSHOT.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/x-content-impl-9.0.1-SNAPSHOT.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/jackson-core-2.17.2.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/jackson-dataformat-cbor-2.17.2.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/jackson-dataformat-smile-2.17.2.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/jackson-dataformat-yaml-2.17.2.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/x-content/build/generated-resources/generateImplProviderImpl/IMPL-JARS/x-content/snakeyaml-2.0.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/entitlement/build/generated-resources/generateAsm-providerProviderImpl/IMPL-JARS/entitlement/elasticsearch-entitlement-asm-provider-9.0.1-SNAPSHOT.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/entitlement/build/generated-resources/generateAsm-providerProviderImpl/IMPL-JARS/entitlement/asm-util-9.7.1.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/entitlement/build/generated-resources/generateAsm-providerProviderImpl/IMPL-JARS/entitlement/asm-tree-9.7.1.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/entitlement/build/generated-resources/generateAsm-providerProviderImpl/IMPL-JARS/entitlement/asm-analysis-9.7.1.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/entitlement/build/generated-resources/generateAsm-providerProviderImpl/IMPL-JARS/entitlement/asm-9.7.1.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/native/build/generated-resources/generateJnaProviderImpl/IMPL-JARS/native-access-jna/native-access-jna-8.17.6-SNAPSHOT.jar").absolutePath)
-    buildArgs.add('--class-path')
-    buildArgs.add(file("../libs/native/build/generated-resources/generateJnaProviderImpl/IMPL-JARS/native-access-jna/jna-5.12.1.jar").absolutePath)
-  }
-}
-
-compileJava {
-  options.compilerArgs << "-Alog4j.graalvm.groupId=${project.group}"
-  options.compilerArgs << "-Alog4j.graalvm.artifactId=${project.name}"
-}
+apply plugin: 'elasticsearch.test-build-info'
+apply plugin: 'elasticsearch.transport-version-references'
+apply plugin: 'elasticsearch.transport-version-resources'
 
 publishing {
   publications {
@@ -100,7 +31,6 @@ dependencies {
 
   api project(':libs:core')
   api project(':libs:logging')
-  api project(':libs:secure-sm')
   api project(':libs:x-content')
   api project(":libs:geo")
   api project(":libs:lz4")
@@ -136,8 +66,6 @@ dependencies {
   // logging
   api "org.apache.logging.log4j:log4j-api:${versions.log4j}"
   api "org.apache.logging.log4j:log4j-core:${versions.log4j}"
-  compileOnly 'com.google.errorprone:error_prone_annotations:2.41.0'
-  compileOnly 'com.github.spotbugs:spotbugs-annotations:4.9.3'
 
   // access to native functions
   implementation project(':libs:native')
@@ -155,9 +83,6 @@ dependencies {
   internalClusterTestImplementation(project(':modules:reindex'))
   internalClusterTestImplementation(project(':modules:mapper-extras'))
   internalClusterTestImplementation(project(':modules:data-streams'))
-
-  api "org.jspecify:jspecify:1.0.0"
-  annotationProcessor 'org.apache.logging.log4j:log4j-core:2.25.1'
 }
 
 spotless {
@@ -165,7 +90,6 @@ spotless {
     targetExclude "src/main/java/org/elasticsearch/index/IndexVersion.java"
   }
 }
-
 
 tasks.named("forbiddenPatterns").configure {
     exclude '**/*.json'
@@ -213,11 +137,9 @@ sourceSets.main.compiledBy(generateModulesList, generatePluginsList)
 if (buildParams.snapshotBuild == false) {
     tasks.named("test").configure {
         systemProperty 'es.index_mode_feature_flag_registered', 'true'
-        systemProperty 'es.failure_store_feature_flag_enabled', 'true'
     }
     tasks.named("internalClusterTest").configure {
         systemProperty 'es.index_mode_feature_flag_registered', 'true'
-        systemProperty 'es.failure_store_feature_flag_enabled', 'true'
     }
 }
 
@@ -364,3 +286,10 @@ tasks.named("licenseHeaders").configure {
 }
 
 tasks.withType(Checkstyle.class).configureEach { t -> t.getMaxHeapSize().set("2g") }
+
+tasks.named("generateTestBuildInfo").configure {
+  t -> {
+    t.getComponentName().set("server")
+    t.getOutputFile().set(project.getLayout().getBuildDirectory().file("generated-build-info/server-test-build-info.json"))
+  }
+}

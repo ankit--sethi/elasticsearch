@@ -16,13 +16,11 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.core.FixForMultiProject;
 import org.elasticsearch.gateway.GatewayService;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.stream.Stream;
@@ -34,8 +32,8 @@ public abstract class MasterNodeFileWatchingService extends AbstractFileWatching
     private final ClusterService clusterService;
     private volatile boolean active = false;
 
-    protected MasterNodeFileWatchingService(ClusterService clusterService, Path watchedFile) {
-        super(watchedFile);
+    protected MasterNodeFileWatchingService(ClusterService clusterService, Path settingsDir) {
+        super(settingsDir);
         this.clusterService = clusterService;
     }
 
@@ -66,7 +64,10 @@ public abstract class MasterNodeFileWatchingService extends AbstractFileWatching
         if (clusterState.nodes().isLocalNodeElectedMaster()
             && clusterState.blocks().hasGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK) == false) {
             synchronized (this) {
-                if (watching() || active == false) {
+                if (active == false) {
+                    return;
+                }
+                if (watching()) {
                     refreshExistingFileStateIfNeeded(clusterState);
                     return;
                 }
@@ -78,7 +79,7 @@ public abstract class MasterNodeFileWatchingService extends AbstractFileWatching
     }
 
     /**
-     * 'Touches' the settings file so the file watcher will re-processes it.
+     * 'Touches' the settings files so the file watcher will re-processes them.
      * <p>
      * The file processing is asynchronous, the cluster state or the file must be already updated such that
      * the version information in the file is newer than what's already saved as processed in the
@@ -87,14 +88,16 @@ public abstract class MasterNodeFileWatchingService extends AbstractFileWatching
      * For snapshot restores we first must restore the snapshot and then force a refresh, since the cluster state
      * metadata version must be reset to 0 and saved in the cluster state.
      */
+    @FixForMultiProject // do we want to re-process everything all at once?
     private void refreshExistingFileStateIfNeeded(ClusterState clusterState) {
-        if (watching()) {
-            if (shouldRefreshFileState(clusterState) && filesExists(watchedFile())) {
-                try {
-                    filesSetLastModifiedTime(watchedFile(), FileTime.from(Instant.now()));
-                } catch (IOException e) {
-                    logger.warn("encountered I/O error trying to update file settings timestamp", e);
+        if (shouldRefreshFileState(clusterState)) {
+            try (Stream<Path> files = filesList(watchedFileDir())) {
+                FileTime time = FileTime.from(Instant.now());
+                for (var it = files.iterator(); it.hasNext();) {
+                    filesSetLastModifiedTime(it.next(), time);
                 }
+            } catch (IOException e) {
+                logger.warn("encountered I/O error trying to update file settings timestamp", e);
             }
         }
     }
@@ -109,38 +112,5 @@ public abstract class MasterNodeFileWatchingService extends AbstractFileWatching
      */
     protected boolean shouldRefreshFileState(ClusterState clusterState) {
         return false;
-    }
-
-    // the following methods are a workaround to ensure exclusive access for files
-    // required by child watchers; this is required because we only check the caller's module
-    // not the entire stack
-    @Override
-    protected boolean filesExists(Path path) {
-        return Files.exists(path);
-    }
-
-    @Override
-    protected boolean filesIsDirectory(Path path) {
-        return Files.isDirectory(path);
-    }
-
-    @Override
-    protected <A extends BasicFileAttributes> A filesReadAttributes(Path path, Class<A> clazz) throws IOException {
-        return Files.readAttributes(path, clazz);
-    }
-
-    @Override
-    protected Stream<Path> filesList(Path dir) throws IOException {
-        return Files.list(dir);
-    }
-
-    @Override
-    protected Path filesSetLastModifiedTime(Path path, FileTime time) throws IOException {
-        return Files.setLastModifiedTime(path, time);
-    }
-
-    @Override
-    protected InputStream filesNewInputStream(Path path) throws IOException {
-        return Files.newInputStream(path);
     }
 }

@@ -14,6 +14,7 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.routing.IndexRouting;
+import org.elasticsearch.cluster.routing.RoutingHashBuilder;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.hash.MurmurHash3;
 import org.elasticsearch.common.hash.MurmurHash3.Hash128;
@@ -46,7 +47,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
 
     private static final long SEED = 0;
 
-    public static void createField(DocumentParserContext context, IndexRouting.ExtractFromSource.Builder routingBuilder, BytesRef tsid) {
+    public static BytesRef createField(DocumentParserContext context, RoutingHashBuilder routingBuilder, BytesRef tsid) {
         final long timestamp = DataStreamTimestampFieldMapper.extractTimestampValue(context.doc());
         String id;
         if (routingBuilder != null) {
@@ -61,7 +62,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
              * at all we just skip the assertion because we can't be sure
              * it always must pass.
              */
-            IndexRouting.ExtractFromSource indexRouting = (IndexRouting.ExtractFromSource) context.indexSettings().getIndexRouting();
+            var indexRouting = (IndexRouting.ExtractFromSource.ForRoutingPath) context.indexSettings().getIndexRouting();
             assert context.getDynamicMappers().isEmpty() == false
                 || context.getDynamicRuntimeFields().isEmpty() == false
                 || id.equals(indexRouting.createId(context.sourceToParse().getXContentType(), context.sourceToParse().source(), suffix));
@@ -94,6 +95,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
 
         BytesRef uidEncoded = Uid.encodeId(context.id());
         context.doc().add(new StringField(NAME, uidEncoded, Field.Store.YES));
+        return uidEncoded;
     }
 
     public static String createId(int routingHash, BytesRef tsid, long timestamp) {
@@ -110,7 +112,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
 
     public static String createId(
         boolean dynamicMappersExists,
-        IndexRouting.ExtractFromSource.Builder routingBuilder,
+        RoutingHashBuilder routingBuilder,
         BytesRef tsid,
         long timestamp,
         byte[] suffix

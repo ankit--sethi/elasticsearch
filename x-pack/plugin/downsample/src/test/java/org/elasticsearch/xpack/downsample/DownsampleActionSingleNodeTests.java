@@ -32,6 +32,7 @@ import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.metadata.Template;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.compress.CompressedXContent;
@@ -1200,6 +1201,7 @@ public class DownsampleActionSingleNodeTests extends ESSingleNodeTestCase {
             .get()
             .getState()
             .getMetadata()
+            .getProject(Metadata.DEFAULT_PROJECT_ID)
             .index(sourceIndex);
         final IndicesService indicesService = getInstanceFromNode(IndicesService.class);
         final MapperService mapperService = indicesService.createIndexMapperServiceForValidation(indexMetadata);
@@ -1766,7 +1768,7 @@ public class DownsampleActionSingleNodeTests extends ESSingleNodeTestCase {
         new Thread(() -> {
             try {
                 downsample(sourceIndex, targetIndex, config);
-            } catch (ResourceAlreadyExistsException e) {
+            } catch (ElasticsearchException e) {
                 firstFailed.set(true);
             } finally {
                 downsampleComplete.countDown();
@@ -1776,7 +1778,7 @@ public class DownsampleActionSingleNodeTests extends ESSingleNodeTestCase {
         new Thread(() -> {
             try {
                 downsample(sourceIndex, targetIndex, config);
-            } catch (ResourceAlreadyExistsException e) {
+            } catch (ElasticsearchException e) {
                 secondFailed.set(true);
             } finally {
                 downsampleComplete.countDown();

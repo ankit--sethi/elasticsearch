@@ -22,6 +22,8 @@ import org.elasticsearch.cluster.metadata.ComponentTemplate;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.ProjectId;
+import org.elasticsearch.cluster.metadata.ProjectMetadata;
 import org.elasticsearch.cluster.metadata.Template;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
@@ -152,7 +154,7 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
 
         SetOnce<Boolean> preUpgradeHookCalled = new SetOnce<>();
         SetOnce<Boolean> postUpgradeHookCalled = new SetOnce<>();
-        getPlugin(TestPlugin.class).preMigrationHook.set(clusterState -> {
+        getPlugin(TestPlugin.class).preMigrationHook.set(project -> {
             // Check that the ordering of these calls is correct.
             assertThat(postUpgradeHookCalled.get(), nullValue());
             Map<String, Object> metadata = new HashMap<>();
@@ -169,7 +171,7 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
             return metadata;
         });
 
-        getPlugin(TestPlugin.class).postMigrationHook.set((clusterState, metadata) -> {
+        getPlugin(TestPlugin.class).postMigrationHook.set((metadata) -> {
             assertThat(preUpgradeHookCalled.get(), is(true));
 
             assertThat(metadata, hasEntry("stringKey", "stringValue"));
@@ -181,7 +183,8 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
             assertThat(innerMap, hasEntry("innerKey", "innerValue"));
 
             // We shouldn't have any results in the cluster state as no features have fully finished yet.
-            FeatureMigrationResults currentResults = clusterState.metadata().custom(FeatureMigrationResults.TYPE);
+            final var project = clusterService().state().metadata().getProject(ProjectId.DEFAULT);
+            FeatureMigrationResults currentResults = project.custom(FeatureMigrationResults.TYPE);
             assertThat(currentResults, nullValue());
             postUpgradeHookCalled.set(true);
         });
@@ -194,7 +197,7 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
         assertTrue("the pre-migration hook wasn't actually called", preUpgradeHookCalled.get());
         assertTrue("the post-migration hook wasn't actually called", postUpgradeHookCalled.get());
 
-        Metadata finalMetadata = assertMetadataAfterMigration(FEATURE_NAME);
+        ProjectMetadata finalMetadata = assertMetadataAfterMigration(FEATURE_NAME);
 
         assertIndexHasCorrectProperties(
             finalMetadata,
@@ -269,7 +272,11 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
         });
 
         // Get the settings to see if the write block was removed
-        var allsettings = client().admin().indices().prepareGetSettings(INTERNAL_UNMANAGED.getIndexPattern()).get().getIndexToSettings();
+        var allsettings = client().admin()
+            .indices()
+            .prepareGetSettings(TEST_REQUEST_TIMEOUT, INTERNAL_UNMANAGED.getIndexPattern())
+            .get()
+            .getIndexToSettings();
         var internalUnmanagedOldIndexSettings = allsettings.get(".int-unman-old");
         var writeBlock = internalUnmanagedOldIndexSettings.get(IndexMetadata.INDEX_BLOCKS_WRITE_SETTING.getKey());
         assertThat("Write block on old index should be removed on migration ERROR status", writeBlock, equalTo("false"));
@@ -355,7 +362,7 @@ public class FeatureMigrationIT extends AbstractFeatureMigrationIntegTest {
         executeMigration(SCRIPTED_INDEX_FEATURE_NAME);
         ensureGreen();
 
-        Metadata metadata = assertMetadataAfterMigration(SCRIPTED_INDEX_FEATURE_NAME);
+        ProjectMetadata metadata = assertMetadataAfterMigration(SCRIPTED_INDEX_FEATURE_NAME);
         String newIndexName = ".int-mans-old" + UPGRADED_INDEX_SUFFIX;
         assertIndexHasCorrectProperties(
             metadata,

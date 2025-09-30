@@ -311,7 +311,8 @@ public class RangeAggregatorTests extends AggregatorTestCase {
                     null,
                     false,
                     null,
-                    null
+                    null,
+                    false
                 )
             )
         );
@@ -426,7 +427,8 @@ public class RangeAggregatorTests extends AggregatorTestCase {
             null,
             false,
             null,
-            null
+            null,
+            false
         );
 
         long start = 2L << 54; // Double stores 53 bits of mantissa, so we aggregate a bunch of bigger values
@@ -590,7 +592,7 @@ public class RangeAggregatorTests extends AggregatorTestCase {
     /**
      * If the top level query is a runtime field we use the standard aggregator
      * because it's marginally faster. You'd expect it to be a *ton* faster but
-     * usually the ranges drive the iteration and they are still fairly fast.
+     * usually the ranges drive the iteration, and they are still fairly fast.
      * But the union operation overhead that comes with combining the range with
      * the top level query tends to slow us down more than the standard aggregator.
      */
@@ -606,7 +608,8 @@ public class RangeAggregatorTests extends AggregatorTestCase {
         Query query = new StringScriptFieldTermQuery(new Script("dummy"), scriptFactory, "dummy", "cat", false);
         debugTestCase(new RangeAggregationBuilder("r").field(NUMBER_FIELD_NAME).addRange(0, 1).addRange(1, 2).addRange(2, 3), query, iw -> {
             for (int d = 0; d < totalDocs; d++) {
-                iw.addDocument(List.of(new IntPoint(NUMBER_FIELD_NAME, 0), new SortedNumericDocValuesField(NUMBER_FIELD_NAME, 0)));
+                int v = d % 2;
+                iw.addDocument(List.of(new IntPoint(NUMBER_FIELD_NAME, v), new SortedNumericDocValuesField(NUMBER_FIELD_NAME, v)));
             }
         }, (InternalRange<?, ?> r, Class<? extends Aggregator> impl, Map<String, Map<String, Object>> debug) -> {
             assertThat(
@@ -617,7 +620,7 @@ public class RangeAggregatorTests extends AggregatorTestCase {
             assertThat(r.getBuckets().stream().map(InternalRange.Bucket::getTo).collect(toList()), equalTo(List.of(1.0, 2.0, 3.0)));
             assertThat(
                 r.getBuckets().stream().map(InternalRange.Bucket::getDocCount).collect(toList()),
-                equalTo(List.of(totalDocs, 0L, 0L))
+                equalTo(List.of(totalDocs / 2, totalDocs / 2, 0L))
             );
             assertThat(impl, equalTo(RangeAggregator.NoOverlap.class));
             assertMap(
@@ -707,7 +710,8 @@ public class RangeAggregatorTests extends AggregatorTestCase {
             null,
             false,
             null,
-            null
+            null,
+            false
         );
         RangeAggregationBuilder aggregationBuilder = new RangeAggregationBuilder("test_range_agg");
         aggregationBuilder.field(NUMBER_FIELD_NAME);

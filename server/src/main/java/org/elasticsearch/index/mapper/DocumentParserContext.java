@@ -14,11 +14,13 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.time.DateFormatter;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.IndexAnalyzers;
 import org.elasticsearch.index.mapper.MapperService.MergeReason;
+import org.elasticsearch.index.mapper.vectors.VectorsFormatProvider;
 import org.elasticsearch.xcontent.FilterXContentParserWrapper;
 import org.elasticsearch.xcontent.FlatteningXContentParser;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -91,6 +93,36 @@ public abstract class DocumentParserContext {
         protected void addDoc(LuceneDocument doc) {
             in.addDoc(doc);
         }
+
+        @Override
+        public void processArrayOffsets(DocumentParserContext context) throws IOException {
+            in.processArrayOffsets(context);
+        }
+
+        @Override
+        public FieldArrayContext getOffSetContext() {
+            return in.getOffSetContext();
+        }
+
+        @Override
+        public void setImmediateXContentParent(XContentParser.Token token) {
+            in.setImmediateXContentParent(token);
+        }
+
+        @Override
+        public XContentParser.Token getImmediateXContentParent() {
+            return in.getImmediateXContentParent();
+        }
+
+        @Override
+        public boolean isImmediateParentAnArray() {
+            return in.isImmediateParentAnArray();
+        }
+
+        @Override
+        public BytesRef getTsid() {
+            return in.getTsid();
+        }
     }
 
     /**
@@ -140,6 +172,8 @@ public abstract class DocumentParserContext {
     private Field version;
     private final SeqNoFieldMapper.SequenceIDFields seqID;
     private final Set<String> fieldsAppliedFromTemplates;
+
+    private FieldArrayContext fieldArrayContext;
 
     /**
      * Fields that are copied from values of other fields via copy_to.
@@ -237,7 +271,7 @@ public abstract class DocumentParserContext {
             new HashMap<>(),
             null,
             null,
-            SeqNoFieldMapper.SequenceIDFields.emptySeqID(),
+            SeqNoFieldMapper.SequenceIDFields.emptySeqID(mappingParserContext.getIndexSettings().seqNoIndexOptions()),
             RoutingFields.fromIndexSettings(mappingParserContext.getIndexSettings()),
             parent,
             dynamic,
@@ -270,6 +304,10 @@ public abstract class DocumentParserContext {
 
     public final MetadataFieldMapper getMetadataMapper(String mapperName) {
         return mappingLookup.getMapping().getMetadataMapperByName(mapperName);
+    }
+
+    public final List<VectorsFormatProvider> getVectorFormatProviders() {
+        return mappingParserContext.getVectorsFormatProviders();
     }
 
     public final MappingParserContext dynamicTemplateParserContext(DateFormatter dateFormatter) {
@@ -305,12 +343,6 @@ public abstract class DocumentParserContext {
         if (canAddIgnoredField()) {
             // Skip tracking the source for this field twice, it's already tracked for the entire parsing subcontext.
             ignoredFieldValues.add(values);
-        }
-    }
-
-    final void removeLastIgnoredField(String name) {
-        if (ignoredFieldValues.isEmpty() == false && ignoredFieldValues.getLast().name().equals(name)) {
-            ignoredFieldValues.removeLast();
         }
     }
 
@@ -458,6 +490,33 @@ public abstract class DocumentParserContext {
 
     public boolean isCopyToDestinationField(String name) {
         return copyToFields.contains(name);
+    }
+
+    public void processArrayOffsets(DocumentParserContext context) throws IOException {
+        if (fieldArrayContext != null) {
+            fieldArrayContext.addToLuceneDocument(context);
+        }
+    }
+
+    public FieldArrayContext getOffSetContext() {
+        if (fieldArrayContext == null) {
+            fieldArrayContext = new FieldArrayContext();
+        }
+        return fieldArrayContext;
+    }
+
+    private XContentParser.Token lastSetToken;
+
+    public void setImmediateXContentParent(XContentParser.Token token) {
+        this.lastSetToken = token;
+    }
+
+    public XContentParser.Token getImmediateXContentParent() {
+        return lastSetToken;
+    }
+
+    public boolean isImmediateParentAnArray() {
+        return lastSetToken == XContentParser.Token.START_ARRAY;
     }
 
     /**
@@ -665,8 +724,14 @@ public abstract class DocumentParserContext {
         if (idField != null) {
             // We just need to store the id as indexed field, so that IndexWriter#deleteDocuments(term) can then
             // delete it when the root document is deleted too.
-            // NOTE: we don't support nested fields in tsdb so it's safe to assume the standard id mapper.
             doc.add(new StringField(IdFieldMapper.NAME, idField.binaryValue(), Field.Store.NO));
+        } else if (indexSettings().getMode() == IndexMode.TIME_SERIES) {
+            // For time series indices, the _id is generated from the _tsid, which in turn is generated from the values of the configured
+            // routing fields. At this point in document parsing, we can't guarantee that we've parsed all the routing fields yet, so the
+            // parent document's _id is not yet available.
+            // So we just add the child document without the parent _id, then in TimeSeriesIdFieldMapper#postParse we set the _id on all
+            // child documents once we've calculated it.
+            assert getRoutingFields().equals(RoutingFields.Noop.INSTANCE) == false;
         } else {
             throw new IllegalStateException("The root document of a nested document should have an _id field");
         }
@@ -810,6 +875,9 @@ public abstract class DocumentParserContext {
     public abstract LuceneDocument doc();
 
     protected abstract void addDoc(LuceneDocument doc);
+
+    @Nullable
+    public abstract BytesRef getTsid();
 
     /**
      * Find a dynamic mapping template for the given field and its matching type

@@ -13,36 +13,63 @@ import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.common.util.FeatureFlag;
 import org.elasticsearch.xpack.esql.core.QlIllegalArgumentException;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
+import org.elasticsearch.xpack.esql.core.expression.MapExpression;
 import org.elasticsearch.xpack.esql.core.expression.function.Function;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.util.Check;
+import org.elasticsearch.xpack.esql.expression.SurrogateExpression;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Absent;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.AbsentOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Avg;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.AvgOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Count;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.CountDistinct;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.CountDistinctOverTime;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.CountOverTime;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Delta;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.First;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.FirstOverTime;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Idelta;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Increase;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Irate;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Last;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.LastOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Max;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.MaxOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Median;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.MedianAbsoluteDeviation;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Min;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.MinOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Percentile;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Present;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.PresentOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Rate;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.Sample;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.SpatialCentroid;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.SpatialExtent;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.StdDev;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Sum;
+import org.elasticsearch.xpack.esql.expression.function.aggregate.SumOverTime;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Top;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.Values;
 import org.elasticsearch.xpack.esql.expression.function.aggregate.WeightedAvg;
 import org.elasticsearch.xpack.esql.expression.function.fulltext.Kql;
 import org.elasticsearch.xpack.esql.expression.function.fulltext.Match;
+import org.elasticsearch.xpack.esql.expression.function.fulltext.MatchPhrase;
+import org.elasticsearch.xpack.esql.expression.function.fulltext.MultiMatch;
 import org.elasticsearch.xpack.esql.expression.function.fulltext.QueryString;
+import org.elasticsearch.xpack.esql.expression.function.fulltext.Score;
 import org.elasticsearch.xpack.esql.expression.function.fulltext.Term;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Bucket;
 import org.elasticsearch.xpack.esql.expression.function.grouping.Categorize;
+import org.elasticsearch.xpack.esql.expression.function.grouping.TBucket;
+import org.elasticsearch.xpack.esql.expression.function.inference.TextEmbedding;
 import org.elasticsearch.xpack.esql.expression.function.scalar.conditional.Case;
 import org.elasticsearch.xpack.esql.expression.function.scalar.conditional.Greatest;
 import org.elasticsearch.xpack.esql.expression.function.scalar.conditional.Least;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.FromBase64;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToAggregateMetricDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToBase64;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToBoolean;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToCartesianPoint;
@@ -51,22 +78,34 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDateNan
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDatePeriod;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDatetime;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDegrees;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDenseVector;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToDouble;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToGeoPoint;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToGeoShape;
-import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToIP;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToGeohash;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToGeohex;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToGeotile;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToInteger;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToIp;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToIpLeadingZerosDecimal;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToIpLeadingZerosOctal;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToIpLeadingZerosRejected;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToLong;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToRadians;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToString;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToTimeDuration;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToUnsignedLong;
 import org.elasticsearch.xpack.esql.expression.function.scalar.convert.ToVersion;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.UrlDecode;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.UrlEncode;
+import org.elasticsearch.xpack.esql.expression.function.scalar.convert.UrlEncodeComponent;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.DateDiff;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.DateExtract;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.DateFormat;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.DateParse;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.DateTrunc;
+import org.elasticsearch.xpack.esql.expression.function.scalar.date.DayName;
+import org.elasticsearch.xpack.esql.expression.function.scalar.date.MonthName;
 import org.elasticsearch.xpack.esql.expression.function.scalar.date.Now;
 import org.elasticsearch.xpack.esql.expression.function.scalar.ip.CIDRMatch;
 import org.elasticsearch.xpack.esql.expression.function.scalar.ip.IpPrefix;
@@ -77,6 +116,7 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.math.Atan;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Atan2;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Cbrt;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Ceil;
+import org.elasticsearch.xpack.esql.expression.function.scalar.math.CopySign;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Cos;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Cosh;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.E;
@@ -88,6 +128,8 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.math.Log10;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Pi;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Pow;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Round;
+import org.elasticsearch.xpack.esql.expression.function.scalar.math.RoundTo;
+import org.elasticsearch.xpack.esql.expression.function.scalar.math.Scalb;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Signum;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Sin;
 import org.elasticsearch.xpack.esql.expression.function.scalar.math.Sinh;
@@ -98,6 +140,7 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.math.Tau;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvAppend;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvAvg;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvConcat;
+import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvContains;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvCount;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvDedupe;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvFirst;
@@ -113,12 +156,16 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvSort
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvSum;
 import org.elasticsearch.xpack.esql.expression.function.scalar.multivalue.MvZip;
 import org.elasticsearch.xpack.esql.expression.function.scalar.nulls.Coalesce;
+import org.elasticsearch.xpack.esql.expression.function.scalar.score.Decay;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.SpatialContains;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.SpatialDisjoint;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.SpatialIntersects;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.SpatialWithin;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StDistance;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StEnvelope;
+import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StGeohash;
+import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StGeohex;
+import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StGeotile;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StX;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StXMax;
 import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StXMin;
@@ -128,6 +175,7 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.spatial.StYMin;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.BitLength;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.ByteLength;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.Concat;
+import org.elasticsearch.xpack.esql.expression.function.scalar.string.Contains;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.EndsWith;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.Hash;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.LTrim;
@@ -150,6 +198,13 @@ import org.elasticsearch.xpack.esql.expression.function.scalar.string.ToLower;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.ToUpper;
 import org.elasticsearch.xpack.esql.expression.function.scalar.string.Trim;
 import org.elasticsearch.xpack.esql.expression.function.scalar.util.Delay;
+import org.elasticsearch.xpack.esql.expression.function.vector.CosineSimilarity;
+import org.elasticsearch.xpack.esql.expression.function.vector.DotProduct;
+import org.elasticsearch.xpack.esql.expression.function.vector.Hamming;
+import org.elasticsearch.xpack.esql.expression.function.vector.Knn;
+import org.elasticsearch.xpack.esql.expression.function.vector.L1Norm;
+import org.elasticsearch.xpack.esql.expression.function.vector.L2Norm;
+import org.elasticsearch.xpack.esql.expression.function.vector.Magnitude;
 import org.elasticsearch.xpack.esql.parser.ParsingException;
 import org.elasticsearch.xpack.esql.session.Configuration;
 
@@ -163,18 +218,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiFunction;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyList;
 import static java.util.Collections.unmodifiableList;
-import static java.util.stream.Collectors.toList;
 import static org.elasticsearch.xpack.esql.core.type.DataType.BOOLEAN;
 import static org.elasticsearch.xpack.esql.core.type.DataType.CARTESIAN_POINT;
 import static org.elasticsearch.xpack.esql.core.type.DataType.CARTESIAN_SHAPE;
 import static org.elasticsearch.xpack.esql.core.type.DataType.DATETIME;
 import static org.elasticsearch.xpack.esql.core.type.DataType.DATE_PERIOD;
+import static org.elasticsearch.xpack.esql.core.type.DataType.DENSE_VECTOR;
 import static org.elasticsearch.xpack.esql.core.type.DataType.DOUBLE;
+import static org.elasticsearch.xpack.esql.core.type.DataType.GEOHASH;
+import static org.elasticsearch.xpack.esql.core.type.DataType.GEOHEX;
+import static org.elasticsearch.xpack.esql.core.type.DataType.GEOTILE;
 import static org.elasticsearch.xpack.esql.core.type.DataType.GEO_POINT;
 import static org.elasticsearch.xpack.esql.core.type.DataType.GEO_SHAPE;
 import static org.elasticsearch.xpack.esql.core.type.DataType.INTEGER;
@@ -204,8 +260,12 @@ public class EsqlFunctionRegistry {
             GEO_SHAPE,
             CARTESIAN_POINT,
             CARTESIAN_SHAPE,
+            GEOHASH,
+            GEOHEX,
+            GEOTILE,
             BOOLEAN,
             UNSIGNED_LONG,
+            DENSE_VECTOR,
             UNSUPPORTED
         );
         DATA_TYPE_CASTING_PRIORITY = new HashMap<>();
@@ -215,7 +275,7 @@ public class EsqlFunctionRegistry {
     }
 
     // Translation table for error messaging in the following function
-    private static final String[] NUM_NAMES = { "zero", "one", "two", "three", "four", "five", };
+    private static final String[] NUM_NAMES = { "zero", "one", "two", "three", "four", "five", "six" };
 
     // list of functions grouped by type of functions (aggregate, statistics, math etc) and ordered alphabetically inside each group
     // a single function will have one entry for itself with its name associated to its instance and, also, one entry for each alias
@@ -231,6 +291,7 @@ public class EsqlFunctionRegistry {
     public EsqlFunctionRegistry() {
         register(functions());
         buildDataTypesForStringLiteralConversion(functions());
+        nameSurrogates();
     }
 
     EsqlFunctionRegistry(FunctionDefinition... functions) {
@@ -269,22 +330,13 @@ public class EsqlFunctionRegistry {
         return defs.values();
     }
 
-    public Collection<FunctionDefinition> listFunctions(String pattern) {
-        // It is worth double checking if we need this copy. These are immutable anyway.
-        Pattern p = Strings.hasText(pattern) ? Pattern.compile(normalize(pattern)) : null;
-        return defs.entrySet()
-            .stream()
-            .filter(e -> p == null || p.matcher(e.getKey()).matches())
-            .map(e -> cloneDefinition(e.getKey(), e.getValue()))
-            .collect(toList());
-    }
-
     private static FunctionDefinition[][] functions() {
         return new FunctionDefinition[][] {
             // grouping functions
             new FunctionDefinition[] {
                 def(Bucket.class, Bucket::new, "bucket", "bin"),
-                def(Categorize.class, Categorize::new, "categorize") },
+                def(Categorize.class, Categorize::new, "categorize"),
+                def(TBucket.class, uni(TBucket::new), "tbucket") },
             // aggregate functions
             // since they declare two public constructors - one with filter (for nested where) and one without
             // use casting to disambiguate between the two
@@ -297,11 +349,14 @@ public class EsqlFunctionRegistry {
                 def(MedianAbsoluteDeviation.class, uni(MedianAbsoluteDeviation::new), "median_absolute_deviation"),
                 def(Min.class, uni(Min::new), "min"),
                 def(Percentile.class, bi(Percentile::new), "percentile"),
+                def(Sample.class, bi(Sample::new), "sample"),
                 def(StdDev.class, uni(StdDev::new), "std_dev"),
                 def(Sum.class, uni(Sum::new), "sum"),
                 def(Top.class, tri(Top::new), "top"),
                 def(Values.class, uni(Values::new), "values"),
-                def(WeightedAvg.class, bi(WeightedAvg::new), "weighted_avg") },
+                def(WeightedAvg.class, bi(WeightedAvg::new), "weighted_avg"),
+                def(Present.class, uni(Present::new), "present"),
+                def(Absent.class, uni(Absent::new), "absent") },
             // math
             new FunctionDefinition[] {
                 def(Abs.class, Abs::new, "abs"),
@@ -317,6 +372,7 @@ public class EsqlFunctionRegistry {
                 def(Exp.class, Exp::new, "exp"),
                 def(Floor.class, Floor::new, "floor"),
                 def(Greatest.class, Greatest::new, "greatest"),
+                def(CopySign.class, bi(CopySign::new), "copy_sign"),
                 def(Hypot.class, Hypot::new, "hypot"),
                 def(Log.class, Log::new, "log"),
                 def(Log10.class, Log10::new, "log10"),
@@ -324,6 +380,8 @@ public class EsqlFunctionRegistry {
                 def(Pi.class, Pi::new, "pi"),
                 def(Pow.class, Pow::new, "pow"),
                 def(Round.class, Round::new, "round"),
+                def(RoundTo.class, RoundTo::new, "round_to"),
+                def(Scalb.class, Scalb::new, "scalb"),
                 def(Signum.class, Signum::new, "signum"),
                 def(Sin.class, Sin::new, "sin"),
                 def(Sinh.class, Sinh::new, "sinh"),
@@ -336,6 +394,7 @@ public class EsqlFunctionRegistry {
                 def(BitLength.class, BitLength::new, "bit_length"),
                 def(ByteLength.class, ByteLength::new, "byte_length"),
                 def(Concat.class, Concat::new, "concat"),
+                def(Contains.class, Contains::new, "contains"),
                 def(EndsWith.class, EndsWith::new, "ends_with"),
                 def(Hash.class, Hash::new, "hash"),
                 def(LTrim.class, LTrim::new, "ltrim"),
@@ -355,7 +414,10 @@ public class EsqlFunctionRegistry {
                 def(Substring.class, Substring::new, "substring"),
                 def(ToLower.class, ToLower::new, "to_lower"),
                 def(ToUpper.class, ToUpper::new, "to_upper"),
-                def(Trim.class, Trim::new, "trim") },
+                def(Trim.class, Trim::new, "trim"),
+                def(UrlEncode.class, UrlEncode::new, "url_encode"),
+                def(UrlEncodeComponent.class, UrlEncodeComponent::new, "url_encode_component"),
+                def(UrlDecode.class, UrlDecode::new, "url_decode") },
             // date
             new FunctionDefinition[] {
                 def(DateDiff.class, DateDiff::new, "date_diff"),
@@ -363,6 +425,8 @@ public class EsqlFunctionRegistry {
                 def(DateFormat.class, DateFormat::new, "date_format"),
                 def(DateParse.class, DateParse::new, "date_parse"),
                 def(DateTrunc.class, DateTrunc::new, "date_trunc"),
+                def(DayName.class, DayName::new, "day_name"),
+                def(MonthName.class, MonthName::new, "month_name"),
                 def(Now.class, Now::new, "now") },
             // spatial
             new FunctionDefinition[] {
@@ -374,6 +438,9 @@ public class EsqlFunctionRegistry {
                 def(SpatialWithin.class, SpatialWithin::new, "st_within"),
                 def(StDistance.class, StDistance::new, "st_distance"),
                 def(StEnvelope.class, StEnvelope::new, "st_envelope"),
+                def(StGeohash.class, StGeohash::new, "st_geohash"),
+                def(StGeotile.class, StGeotile::new, "st_geotile"),
+                def(StGeohex.class, StGeohex::new, "st_geohex"),
                 def(StXMax.class, StXMax::new, "st_xmax"),
                 def(StXMin.class, StXMin::new, "st_xmin"),
                 def(StYMax.class, StYMax::new, "st_ymax"),
@@ -390,6 +457,7 @@ public class EsqlFunctionRegistry {
             // conversion functions
             new FunctionDefinition[] {
                 def(FromBase64.class, FromBase64::new, "from_base64"),
+                def(ToAggregateMetricDouble.class, ToAggregateMetricDouble::new, "to_aggregate_metric_double", "to_aggregatemetricdouble"),
                 def(ToBase64.class, ToBase64::new, "to_base64"),
                 def(ToBoolean.class, ToBoolean::new, "to_boolean", "to_bool"),
                 def(ToCartesianPoint.class, ToCartesianPoint::new, "to_cartesianpoint"),
@@ -398,10 +466,14 @@ public class EsqlFunctionRegistry {
                 def(ToDatetime.class, ToDatetime::new, "to_datetime", "to_dt"),
                 def(ToDateNanos.class, ToDateNanos::new, "to_date_nanos", "to_datenanos"),
                 def(ToDegrees.class, ToDegrees::new, "to_degrees"),
+                def(ToDenseVector.class, ToDenseVector::new, "to_dense_vector"),
                 def(ToDouble.class, ToDouble::new, "to_double", "to_dbl"),
+                def(ToGeohash.class, ToGeohash::new, "to_geohash"),
+                def(ToGeotile.class, ToGeotile::new, "to_geotile"),
+                def(ToGeohex.class, ToGeohex::new, "to_geohex"),
                 def(ToGeoPoint.class, ToGeoPoint::new, "to_geopoint"),
                 def(ToGeoShape.class, ToGeoShape::new, "to_geoshape"),
-                def(ToIP.class, ToIP::new, "to_ip"),
+                def(ToIp.class, ToIp::new, "to_ip"),
                 def(ToInteger.class, ToInteger::new, "to_integer", "to_int"),
                 def(ToLong.class, ToLong::new, "to_long"),
                 def(ToRadians.class, ToRadians::new, "to_radians"),
@@ -414,6 +486,7 @@ public class EsqlFunctionRegistry {
                 def(MvAppend.class, MvAppend::new, "mv_append"),
                 def(MvAvg.class, MvAvg::new, "mv_avg"),
                 def(MvConcat.class, MvConcat::new, "mv_concat"),
+                def(MvContains.class, MvContains::new, "mv_contains"),
                 def(MvCount.class, MvCount::new, "mv_count"),
                 def(MvDedupe.class, MvDedupe::new, "mv_dedupe"),
                 def(MvFirst.class, MvFirst::new, "mv_first"),
@@ -431,9 +504,29 @@ public class EsqlFunctionRegistry {
                 def(Split.class, Split::new, "split") },
             // fulltext functions
             new FunctionDefinition[] {
+                def(Decay.class, quad(Decay::new), "decay"),
                 def(Kql.class, uni(Kql::new), "kql"),
                 def(Match.class, tri(Match::new), "match"),
-                def(QueryString.class, bi(QueryString::new), "qstr") } };
+                def(MultiMatch.class, MultiMatch::new, "multi_match"),
+                def(QueryString.class, bi(QueryString::new), "qstr"),
+                def(MatchPhrase.class, tri(MatchPhrase::new), "match_phrase") },
+            // time-series functions
+            new FunctionDefinition[] {
+                def(Rate.class, uni(Rate::new), "rate"),
+                def(Irate.class, uni(Irate::new), "irate"),
+                def(Idelta.class, uni(Idelta::new), "idelta"),
+                def(Delta.class, uni(Delta::new), "delta"),
+                def(Increase.class, uni(Increase::new), "increase"),
+                def(MaxOverTime.class, uni(MaxOverTime::new), "max_over_time"),
+                def(MinOverTime.class, uni(MinOverTime::new), "min_over_time"),
+                def(SumOverTime.class, uni(SumOverTime::new), "sum_over_time"),
+                def(CountOverTime.class, uni(CountOverTime::new), "count_over_time"),
+                def(CountDistinctOverTime.class, bi(CountDistinctOverTime::new), "count_distinct_over_time"),
+                def(PresentOverTime.class, uni(PresentOverTime::new), "present_over_time"),
+                def(AbsentOverTime.class, uni(AbsentOverTime::new), "absent_over_time"),
+                def(AvgOverTime.class, uni(AvgOverTime::new), "avg_over_time"),
+                def(LastOverTime.class, uni(LastOverTime::new), "last_over_time"),
+                def(FirstOverTime.class, uni(FirstOverTime::new), "first_over_time") } };
 
     }
 
@@ -443,8 +536,18 @@ public class EsqlFunctionRegistry {
                 // The delay() function is for debug/snapshot environments only and should never be enabled in a non-snapshot build.
                 // This is an experimental function and can be removed without notice.
                 def(Delay.class, Delay::new, "delay"),
-                def(Rate.class, Rate::withUnresolvedTimestamp, "rate"),
-                def(Term.class, bi(Term::new), "term") } };
+                def(First.class, bi(First::new), "first"),
+                def(Last.class, bi(Last::new), "last"),
+                def(Score.class, uni(Score::new), Score.NAME),
+                def(Term.class, bi(Term::new), "term"),
+                def(Knn.class, tri(Knn::new), "knn"),
+                def(CosineSimilarity.class, CosineSimilarity::new, "v_cosine"),
+                def(DotProduct.class, DotProduct::new, "v_dot_product"),
+                def(L1Norm.class, L1Norm::new, "v_l1_norm"),
+                def(L2Norm.class, L2Norm::new, "v_l2_norm"),
+                def(Magnitude.class, Magnitude::new, "v_magnitude"),
+                def(Hamming.class, Hamming::new, "v_hamming"),
+                def(TextEmbedding.class, bi(TextEmbedding::new), "text_embedding") } };
     }
 
     public EsqlFunctionRegistry snapshotRegistry() {
@@ -509,6 +612,10 @@ public class EsqlFunctionRegistry {
 
         public boolean optional() {
             return optional;
+        }
+
+        public boolean variadic() {
+            return variadic;
         }
 
         public DataType targetDataType() {
@@ -803,8 +910,13 @@ public class EsqlFunctionRegistry {
         }
     }
 
-    protected FunctionDefinition cloneDefinition(String name, FunctionDefinition definition) {
-        return new FunctionDefinition(name, emptyList(), definition.clazz(), definition.builder());
+    /**
+     * Add {@link #names} entries for functions that are not registered, but we rewrite to using {@link SurrogateExpression}.
+     */
+    private void nameSurrogates() {
+        names.put(ToIpLeadingZerosRejected.class, "TO_IP");
+        names.put(ToIpLeadingZerosDecimal.class, "TO_IP");
+        names.put(ToIpLeadingZerosOctal.class, "TO_IP");
     }
 
     protected interface FunctionBuilder {
@@ -895,11 +1007,14 @@ public class EsqlFunctionRegistry {
         FunctionBuilder builder = (source, children, cfg) -> {
             boolean isBinaryOptionalParamFunction = OptionalArgument.class.isAssignableFrom(function);
             if (isBinaryOptionalParamFunction && (children.size() > 2 || children.size() < 1)) {
-                throw new QlIllegalArgumentException("expects one or two arguments");
+                throw new QlIllegalArgumentException(
+                    Strings.format("function %s expects one or two arguments but it received %d", Arrays.toString(names), children.size())
+                );
             } else if (isBinaryOptionalParamFunction == false && children.size() != 2) {
-                throw new QlIllegalArgumentException("expects exactly two arguments");
+                throw new QlIllegalArgumentException(
+                    Strings.format("function %s expects exactly two arguments, it received %d", Arrays.toString(names), children.size())
+                );
             }
-
             return ctorRef.build(source, children.get(0), children.size() == 2 ? children.get(1) : null);
         };
         return def(function, builder, names);
@@ -1023,6 +1138,32 @@ public class EsqlFunctionRegistry {
         T build(Source source, Expression exp, List<Expression> variadic);
     }
 
+    protected interface BinaryVariadicWithOptionsBuilder<T> {
+        T build(Source source, Expression exp, List<Expression> variadic, Expression options);
+    };
+
+    protected static <T extends Function> FunctionDefinition def(
+        Class<T> function,
+        BinaryVariadicWithOptionsBuilder<T> ctorRef,
+        String... names
+    ) {
+        FunctionBuilder builder = (source, children, cfg) -> {
+            boolean hasMinimumOne = OptionalArgument.class.isAssignableFrom(function);
+            if (hasMinimumOne && children.size() < 1) {
+                throw new QlIllegalArgumentException("expects at least one argument");
+            } else if (hasMinimumOne == false && children.size() < 2) {
+                throw new QlIllegalArgumentException("expects at least two arguments");
+            }
+            Expression options = children.getLast();
+            if (options instanceof MapExpression) {
+                return ctorRef.build(source, children.get(0), children.subList(1, children.size() - 1), options);
+            }
+
+            return ctorRef.build(source, children.get(0), children.subList(1, children.size()), null);
+        };
+        return def(function, builder, names);
+    }
+
     /**
      * Build a {@linkplain FunctionDefinition} for a no-argument function that is configuration aware.
      */
@@ -1051,10 +1192,10 @@ public class EsqlFunctionRegistry {
         String... names
     ) {
         FunctionBuilder builder = (source, children, cfg) -> {
-            if (children.size() > 1) {
+            if (children.size() != 1) {
                 throw new QlIllegalArgumentException("expects exactly one argument");
             }
-            Expression ex = children.size() == 1 ? children.get(0) : null;
+            Expression ex = children.get(0);
             return ctorRef.build(source, ex, cfg);
         };
         return def(function, builder, names);
@@ -1123,6 +1264,10 @@ public class EsqlFunctionRegistry {
     }
 
     private static <T extends Function> TernaryBuilder<T> tri(TernaryBuilder<T> function) {
+        return function;
+    }
+
+    private static <T extends Function> QuaternaryBuilder<T> quad(QuaternaryBuilder<T> function) {
         return function;
     }
 

@@ -22,15 +22,15 @@ import org.elasticsearch.test.http.MockWebServer;
 import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xcontent.XContentType;
-import org.elasticsearch.xpack.inference.external.elastic.ElasticInferenceServiceResponseHandler;
 import org.elasticsearch.xpack.inference.external.http.HttpClient;
 import org.elasticsearch.xpack.inference.external.http.HttpClientManager;
 import org.elasticsearch.xpack.inference.external.http.retry.ResponseHandler;
 import org.elasticsearch.xpack.inference.external.request.Request;
-import org.elasticsearch.xpack.inference.external.request.elastic.ElasticInferenceServiceAuthorizationRequest;
-import org.elasticsearch.xpack.inference.external.response.elastic.ElasticInferenceServiceAuthorizationResponseEntity;
 import org.elasticsearch.xpack.inference.logging.ThrottlerManager;
 import org.elasticsearch.xpack.inference.services.ServiceComponentsTests;
+import org.elasticsearch.xpack.inference.services.elastic.ElasticInferenceServiceResponseHandler;
+import org.elasticsearch.xpack.inference.services.elastic.request.ElasticInferenceServiceAuthorizationRequest;
+import org.elasticsearch.xpack.inference.services.elastic.response.ElasticInferenceServiceAuthorizationResponseEntity;
 import org.elasticsearch.xpack.inference.telemetry.TraceContext;
 import org.junit.After;
 import org.junit.Before;
@@ -44,18 +44,20 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.core.Strings.format;
-import static org.elasticsearch.xpack.inference.Utils.inferenceUtilityPool;
+import static org.elasticsearch.xpack.core.inference.results.TextEmbeddingFloatResultsTests.buildExpectationFloat;
+import static org.elasticsearch.xpack.inference.Utils.inferenceUtilityExecutors;
 import static org.elasticsearch.xpack.inference.Utils.mockClusterServiceEmpty;
 import static org.elasticsearch.xpack.inference.external.http.Utils.entityAsMap;
 import static org.elasticsearch.xpack.inference.external.http.Utils.getUrl;
-import static org.elasticsearch.xpack.inference.external.request.openai.OpenAiUtils.ORGANIZATION_HEADER;
-import static org.elasticsearch.xpack.inference.results.TextEmbeddingResultsTests.buildExpectationFloat;
 import static org.elasticsearch.xpack.inference.services.ServiceComponentsTests.createWithEmptySettings;
 import static org.elasticsearch.xpack.inference.services.elastic.ElasticInferenceService.ELASTIC_INFERENCE_SERVICE_IDENTIFIER;
+import static org.elasticsearch.xpack.inference.services.elastic.request.ElasticInferenceServiceRequestTests.randomElasticInferenceServiceRequestMetadata;
+import static org.elasticsearch.xpack.inference.services.openai.OpenAiUtils.ORGANIZATION_HEADER;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.sameInstance;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
@@ -72,7 +74,7 @@ public class HttpRequestSenderTests extends ESTestCase {
     @Before
     public void init() throws Exception {
         webServer.start();
-        threadPool = createThreadPool(inferenceUtilityPool());
+        threadPool = createThreadPool(inferenceUtilityExecutors());
         clientManager = HttpClientManager.create(Settings.EMPTY, threadPool, mockClusterServiceEmpty(), mock(ThrottlerManager.class));
         threadRef.set(null);
     }
@@ -86,6 +88,27 @@ public class HttpRequestSenderTests extends ESTestCase {
         clientManager.close();
         terminate(threadPool);
         webServer.close();
+    }
+
+    public void testCreateSender_ReturnsSameRequestExecutorInstance() {
+        var senderFactory = new HttpRequestSender.Factory(createWithEmptySettings(threadPool), clientManager, mockClusterServiceEmpty());
+
+        var sender1 = createSender(senderFactory);
+        var sender2 = createSender(senderFactory);
+
+        assertThat(sender1, instanceOf(HttpRequestSender.class));
+        assertThat(sender2, instanceOf(HttpRequestSender.class));
+        assertThat(sender1, sameInstance(sender2));
+    }
+
+    public void testCreateSender_CanCallStartMultipleTimes() throws Exception {
+        var senderFactory = new HttpRequestSender.Factory(createWithEmptySettings(threadPool), clientManager, mockClusterServiceEmpty());
+
+        try (var sender = createSender(senderFactory)) {
+            sender.start();
+            sender.start();
+            sender.start();
+        }
     }
 
     public void testCreateSender_SendsRequestAndReceivesResponse() throws Exception {
@@ -119,7 +142,7 @@ public class HttpRequestSenderTests extends ESTestCase {
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
             sender.send(
                 OpenAiEmbeddingsRequestManagerTests.makeCreator(getUrl(webServer), null, "key", "model", null, threadPool),
-                new DocumentsOnlyInput(List.of("abc")),
+                new EmbeddingsInput(List.of("abc"), null),
                 null,
                 listener
             );
@@ -159,7 +182,11 @@ public class HttpRequestSenderTests extends ESTestCase {
             webServer.enqueue(new MockResponse().setResponseCode(200).setBody(responseJson));
 
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
-            var request = new ElasticInferenceServiceAuthorizationRequest(getUrl(webServer), new TraceContext("", ""));
+            var request = new ElasticInferenceServiceAuthorizationRequest(
+                getUrl(webServer),
+                new TraceContext("", ""),
+                randomElasticInferenceServiceRequestMetadata()
+            );
             var responseHandler = new ElasticInferenceServiceResponseHandler(
                 String.format(Locale.ROOT, "%s sparse embeddings", ELASTIC_INFERENCE_SERVICE_IDENTIFIER),
                 ElasticInferenceServiceAuthorizationResponseEntity::fromResponse
@@ -195,7 +222,7 @@ public class HttpRequestSenderTests extends ESTestCase {
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
             var thrownException = expectThrows(
                 AssertionError.class,
-                () -> sender.send(RequestManagerTests.createMock(), new DocumentsOnlyInput(List.of()), null, listener)
+                () -> sender.send(RequestManagerTests.createMock(), new EmbeddingsInput(List.of(), null), null, listener)
             );
             assertThat(thrownException.getMessage(), is("call start() before sending a request"));
         }
@@ -216,7 +243,7 @@ public class HttpRequestSenderTests extends ESTestCase {
             sender.start();
 
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
-            sender.send(RequestManagerTests.createMock(), new DocumentsOnlyInput(List.of()), TimeValue.timeValueNanos(1), listener);
+            sender.send(RequestManagerTests.createMock(), new EmbeddingsInput(List.of(), null), TimeValue.timeValueNanos(1), listener);
 
             var thrownException = expectThrows(ElasticsearchStatusException.class, () -> listener.actionGet(TIMEOUT));
 
@@ -239,7 +266,7 @@ public class HttpRequestSenderTests extends ESTestCase {
             sender.start();
 
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
-            sender.send(RequestManagerTests.createMock(), new DocumentsOnlyInput(List.of()), TimeValue.timeValueNanos(1), listener);
+            sender.send(RequestManagerTests.createMock(), new EmbeddingsInput(List.of(), null), TimeValue.timeValueNanos(1), listener);
 
             var thrownException = expectThrows(ElasticsearchStatusException.class, () -> listener.actionGet(TIMEOUT));
 

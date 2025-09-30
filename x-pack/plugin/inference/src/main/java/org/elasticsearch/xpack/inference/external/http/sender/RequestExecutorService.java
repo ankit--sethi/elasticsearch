@@ -19,7 +19,6 @@ import org.elasticsearch.inference.InferenceServiceResults;
 import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.inference.common.AdjustableCapacityBlockingQueue;
-import org.elasticsearch.xpack.inference.common.InferenceServiceNodeLocalRateLimitCalculator;
 import org.elasticsearch.xpack.inference.common.RateLimiter;
 import org.elasticsearch.xpack.inference.external.http.RequestExecutor;
 import org.elasticsearch.xpack.inference.external.http.retry.RequestSender;
@@ -55,7 +54,7 @@ import static org.elasticsearch.xpack.inference.InferencePlugin.UTILITY_THREAD_P
  * attempting to execute a task (aka waiting for the connection manager to lease a connection). See
  * {@link org.apache.http.client.config.RequestConfig.Builder#setConnectionRequestTimeout} for more info.
  */
-class RequestExecutorService implements RequestExecutor {
+public class RequestExecutorService implements RequestExecutor {
 
     // default for tests
     static final AdjustableCapacityBlockingQueue.QueueCreator<RejectableTask> DEFAULT_QUEUE_CREATOR =
@@ -98,8 +97,6 @@ class RequestExecutorService implements RequestExecutor {
     private static final TimeValue RATE_LIMIT_GROUP_CLEANUP_INTERVAL = TimeValue.timeValueDays(1);
 
     private final ConcurrentMap<Object, RateLimitingEndpointHandler> rateLimitGroupings = new ConcurrentHashMap<>();
-    // TODO: add one atomic integer (number of nodes); also explain the assumption and why this works
-    // TODO: document that this impacts chat completion (and increase the default rate limit)
     private final AtomicInteger rateLimitDivisor = new AtomicInteger(1);
     private final ThreadPool threadPool;
     private final CountDownLatch startupLatch;
@@ -113,7 +110,7 @@ class RequestExecutorService implements RequestExecutor {
     private final AtomicReference<Scheduler.Cancellable> cancellableCleanupTask = new AtomicReference<>();
     private final AtomicBoolean started = new AtomicBoolean(false);
 
-    RequestExecutorService(
+    public RequestExecutorService(
         ThreadPool threadPool,
         @Nullable CountDownLatch startupLatch,
         RequestExecutorServiceSettings settings,
@@ -122,7 +119,7 @@ class RequestExecutorService implements RequestExecutor {
         this(threadPool, DEFAULT_QUEUE_CREATOR, startupLatch, settings, requestSender, Clock.systemUTC(), DEFAULT_RATE_LIMIT_CREATOR);
     }
 
-    RequestExecutorService(
+    public RequestExecutorService(
         ThreadPool threadPool,
         AdjustableCapacityBlockingQueue.QueueCreator<RejectableTask> queueCreator,
         @Nullable CountDownLatch startupLatch,
@@ -163,19 +160,6 @@ class RequestExecutorService implements RequestExecutor {
 
     public int queueSize() {
         return rateLimitGroupings.values().stream().mapToInt(RateLimitingEndpointHandler::queueSize).sum();
-    }
-
-    @Override
-    public void updateRateLimitDivisor(int numResponsibleNodes) {
-        // in the unlikely case where we get an invalid value, we'll just ignore it
-        if (numResponsibleNodes <= 0) {
-            return;
-        }
-
-        rateLimitDivisor.set(numResponsibleNodes);
-        for (var rateLimitingEndpointHandler : rateLimitGroupings.values()) {
-            rateLimitingEndpointHandler.updateTokensPerTimeUnit(rateLimitDivisor.get());
-        }
     }
 
     /**
@@ -252,16 +236,20 @@ class RequestExecutorService implements RequestExecutor {
 
     private void handleTasks() {
         try {
-            if (shutdown.get()) {
-                logger.debug("Shutdown requested while handling tasks, cleaning up");
-                cleanup();
-                return;
-            }
+            TimeValue timeToWait;
+            do {
+                if (shutdown.get()) {
+                    logger.debug("Shutdown requested while handling tasks, cleaning up");
+                    cleanup();
+                    return;
+                }
 
-            var timeToWait = settings.getTaskPollFrequency();
-            for (var endpoint : rateLimitGroupings.values()) {
-                timeToWait = TimeValue.min(endpoint.executeEnqueuedTask(), timeToWait);
-            }
+                timeToWait = settings.getTaskPollFrequency();
+                for (var endpoint : rateLimitGroupings.values()) {
+                    timeToWait = TimeValue.min(endpoint.executeEnqueuedTask(), timeToWait);
+                }
+                // if we execute a task the timeToWait will be 0 so we'll immediately look for more work
+            } while (timeToWait.compareTo(TimeValue.ZERO) <= 0);
 
             scheduleNextHandleTasks(timeToWait);
         } catch (Exception e) {
@@ -392,24 +380,10 @@ class RequestExecutorService implements RequestExecutor {
                 rateLimitSettings.requestsPerTimeUnit(),
                 rateLimitSettings.timeUnit()
             );
-
-            this.updateTokensPerTimeUnit(rateLimitDivisor);
         }
 
         public void init() {
             requestExecutorServiceSettings.registerQueueCapacityCallback(id, this::onCapacityChange);
-        }
-
-        /**
-         * This method is solely called by {@link InferenceServiceNodeLocalRateLimitCalculator} to update
-         * rate limits, so they're "node-local".
-         * The general idea is described in {@link InferenceServiceNodeLocalRateLimitCalculator} in more detail.
-         *
-         * @param divisor - divisor to divide the initial requests per time unit by
-         */
-        public synchronized void updateTokensPerTimeUnit(Integer divisor) {
-            double updatedTokensPerTimeUnit = (double) originalRequestsPerTimeUnit / divisor;
-            rateLimiter.setRate(ACCUMULATED_TOKENS_LIMIT, updatedTokensPerTimeUnit, rateLimitSettings.timeUnit());
         }
 
         public String id() {
@@ -449,9 +423,11 @@ class RequestExecutorService implements RequestExecutor {
         }
 
         private TimeValue executeEnqueuedTaskInternal() {
-            var timeBeforeAvailableToken = rateLimiter.timeToReserve(1);
-            if (shouldExecuteImmediately(timeBeforeAvailableToken) == false) {
-                return timeBeforeAvailableToken;
+            if (rateLimitSettings.isEnabled()) {
+                var timeBeforeAvailableToken = rateLimiter.timeToReserve(1);
+                if (shouldExecuteImmediately(timeBeforeAvailableToken) == false) {
+                    return timeBeforeAvailableToken;
+                }
             }
 
             var task = queue.poll();
@@ -463,9 +439,11 @@ class RequestExecutorService implements RequestExecutor {
                 return NO_TASKS_AVAILABLE;
             }
 
-            // We should never have to wait because we checked above
-            var reserveRes = rateLimiter.reserve(1);
-            assert shouldExecuteImmediately(reserveRes) : "Reserving request tokens required a sleep when it should not have";
+            if (rateLimitSettings.isEnabled()) {
+                // We should never have to wait because we checked above
+                var reserveRes = rateLimiter.reserve(1);
+                assert shouldExecuteImmediately(reserveRes) : "Reserving request tokens required a sleep when it should not have";
+            }
 
             task.getRequestManager()
                 .execute(task.getInferenceInputs(), requestSender, task.getRequestCompletedFunction(), task.getListener());

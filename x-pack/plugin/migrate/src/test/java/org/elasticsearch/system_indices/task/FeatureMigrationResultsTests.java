@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-public class FeatureMigrationResultsTests extends ChunkedToXContentDiffableSerializationTestCase<Metadata.Custom> {
+public class FeatureMigrationResultsTests extends ChunkedToXContentDiffableSerializationTestCase<Metadata.ProjectCustom> {
 
     private static final ConstructingObjectParser<SingleFeatureMigrationResult, Void> SINGLE_FEATURE_RESULT_PARSER =
         new ConstructingObjectParser<>(
@@ -79,7 +79,7 @@ public class FeatureMigrationResultsTests extends ChunkedToXContentDiffableSeria
     }
 
     @Override
-    protected FeatureMigrationResults mutateInstance(Metadata.Custom instance) {
+    protected FeatureMigrationResults mutateInstance(Metadata.ProjectCustom instance) {
         int oldSize = ((FeatureMigrationResults) instance).getFeatureStatuses().size();
         if (oldSize == 0 || randomBoolean()) {
             return new FeatureMigrationResults(
@@ -100,7 +100,7 @@ public class FeatureMigrationResultsTests extends ChunkedToXContentDiffableSeria
     }
 
     @Override
-    protected Writeable.Reader<Metadata.Custom> instanceReader() {
+    protected Writeable.Reader<Metadata.ProjectCustom> instanceReader() {
         return FeatureMigrationResults::new;
     }
 
@@ -110,12 +110,12 @@ public class FeatureMigrationResultsTests extends ChunkedToXContentDiffableSeria
     }
 
     @Override
-    protected Metadata.Custom makeTestChanges(Metadata.Custom testInstance) {
+    protected Metadata.ProjectCustom makeTestChanges(Metadata.ProjectCustom testInstance) {
         return mutateInstance(testInstance);
     }
 
     @Override
-    protected Writeable.Reader<Diff<Metadata.Custom>> diffReader() {
+    protected Writeable.Reader<Diff<Metadata.ProjectCustom>> diffReader() {
         return FeatureMigrationResults.ResultsDiff::new;
     }
 }

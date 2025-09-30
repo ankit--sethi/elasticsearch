@@ -10,13 +10,11 @@ package org.elasticsearch.xpack.esql.session;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.collect.Iterators;
-import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.BlockStreamInput;
-import org.elasticsearch.compute.data.BlockWritables;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.test.AbstractWireSerializingTestCase;
 import org.elasticsearch.xpack.esql.Column;
@@ -50,8 +48,8 @@ public class ConfigurationSerializationTests extends AbstractWireSerializingTest
         String username = in.username();
         String clusterName = in.clusterName();
         QueryPragmas pragmas = in.pragmas();
-        int resultTruncationMaxSize = in.resultTruncationMaxSize();
-        int resultTruncationDefaultSize = in.resultTruncationDefaultSize();
+        int resultTruncationMaxSize = in.resultTruncationMaxSize(false);
+        int resultTruncationDefaultSize = in.resultTruncationDefaultSize(false);
         String query = in.query();
         boolean profile = in.profile();
         Map<String, Map<String, Column>> tables = in.tables();
@@ -103,13 +101,11 @@ public class ConfigurationSerializationTests extends AbstractWireSerializingTest
             query,
             profile,
             tables,
-            System.nanoTime()
+            System.nanoTime(),
+            randomBoolean(),
+            in.resultTruncationMaxSize(true),
+            in.resultTruncationDefaultSize(true)
         );
 
-    }
-
-    @Override
-    protected NamedWriteableRegistry getNamedWriteableRegistry() {
-        return new NamedWriteableRegistry(BlockWritables.getNamedWriteables());
     }
 }

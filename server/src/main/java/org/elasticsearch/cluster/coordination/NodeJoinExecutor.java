@@ -161,7 +161,6 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
 
                     // update the node's feature set if it has one
                     // this can happen if the master has just moved from a pre-features version to a post-features version
-                    assert Version.V_8_12_0.onOrBefore(Version.CURRENT) : "This can be removed once 8.12.0 is no longer a valid version";
                     if (Objects.equals(nodeFeatures.get(node.getId()), nodeJoinTask.features()) == false) {
                         logger.debug("updating node [{}] features {}", node.getId(), nodeJoinTask.features());
                         nodeFeatures.put(node.getId(), nodeJoinTask.features());
@@ -371,7 +370,7 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
      * that are also present across the whole cluster as a result.
      */
     private Set<String> calculateEffectiveClusterFeatures(DiscoveryNodes nodes, Map<String, Set<String>> nodeFeatures) {
-        if (featureService.featuresCanBeAssumedForNodes(nodes)) {
+        if (FeatureService.featuresCanBeAssumedForNodes(nodes)) {
             Set<String> assumedFeatures = featureService.getNodeFeatures()
                 .values()
                 .stream()
@@ -382,7 +381,7 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
             // add all assumed features to the featureset of all nodes of the next major version
             nodeFeatures = new HashMap<>(nodeFeatures);
             for (var node : nodes.getNodes().entrySet()) {
-                if (featureService.featuresCanBeAssumedForNode(node.getValue())) {
+                if (FeatureService.featuresCanBeAssumedForNode(node.getValue())) {
                     assert nodeFeatures.containsKey(node.getKey()) : "Node " + node.getKey() + " does not have any features";
                     nodeFeatures.computeIfPresent(node.getKey(), (k, v) -> {
                         var newFeatures = new HashSet<>(v);
@@ -411,7 +410,7 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
     ) {
         // we ensure that all indices in the cluster we join are compatible with us no matter if they are
         // closed or not we can't read mappings of these indices so we need to reject the join...
-        for (IndexMetadata idxMetadata : metadata) {
+        for (IndexMetadata idxMetadata : metadata.indicesAllProjects()) {
             if (idxMetadata.getCompatibilityVersion().after(maxSupportedVersion)) {
                 throw new IllegalStateException(
                     "index "
@@ -525,7 +524,7 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
             return newNodeFeatures;
         }
 
-        if (featureService.featuresCanBeAssumedForNode(node)) {
+        if (FeatureService.featuresCanBeAssumedForNode(node)) {
             // it might still be ok for this node to join if this node can have assumed features,
             // and all the missing features are assumed
             // we can get the NodeFeature object direct from this node's registered features
