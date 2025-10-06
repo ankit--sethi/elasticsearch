@@ -59,6 +59,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
 
     /**
      * The reason why a mapping is being merged.
+     * The reason why a mapping is being merged.
      */
     public enum MergeReason {
         /**
