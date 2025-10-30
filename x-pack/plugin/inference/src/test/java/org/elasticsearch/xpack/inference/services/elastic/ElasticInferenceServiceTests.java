@@ -40,15 +40,14 @@ import org.elasticsearch.xcontent.XContentFactory;
 import org.elasticsearch.xcontent.XContentType;
 import org.elasticsearch.xpack.core.inference.action.InferenceAction;
 import org.elasticsearch.xpack.core.inference.results.ChunkedInferenceEmbedding;
+import org.elasticsearch.xpack.core.inference.results.DenseEmbeddingFloatResults;
 import org.elasticsearch.xpack.core.inference.results.SparseEmbeddingResultsTests;
-import org.elasticsearch.xpack.core.inference.results.TextEmbeddingFloatResults;
 import org.elasticsearch.xpack.core.inference.results.UnifiedChatCompletionException;
 import org.elasticsearch.xpack.inference.InferencePlugin;
 import org.elasticsearch.xpack.inference.LocalStateInferencePlugin;
 import org.elasticsearch.xpack.inference.external.http.HttpClientManager;
 import org.elasticsearch.xpack.inference.external.http.sender.HttpRequestSender;
 import org.elasticsearch.xpack.inference.external.http.sender.HttpRequestSenderTests;
-import org.elasticsearch.xpack.inference.external.http.sender.Sender;
 import org.elasticsearch.xpack.inference.logging.ThrottlerManager;
 import org.elasticsearch.xpack.inference.registry.ModelRegistry;
 import org.elasticsearch.xpack.inference.services.InferenceEventsAssertion;
@@ -90,6 +89,7 @@ import static org.elasticsearch.xpack.inference.Utils.inferenceUtilityExecutors;
 import static org.elasticsearch.xpack.inference.Utils.mockClusterServiceEmpty;
 import static org.elasticsearch.xpack.inference.external.http.Utils.entityAsMap;
 import static org.elasticsearch.xpack.inference.external.http.Utils.getUrl;
+import static org.elasticsearch.xpack.inference.services.SenderServiceTests.createMockSender;
 import static org.elasticsearch.xpack.inference.services.ServiceComponentsTests.createWithEmptySettings;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
@@ -407,7 +407,7 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
     }
 
     public void testInfer_ThrowsErrorWhenModelIsNotAValidModel() throws IOException {
-        var sender = mock(Sender.class);
+        var sender = createMockSender();
 
         var factory = mock(HttpRequestSender.Factory.class);
         when(factory.createSender()).thenReturn(sender);
@@ -436,7 +436,7 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
             );
 
             verify(factory, times(1)).createSender();
-            verify(sender, times(1)).start();
+            verify(sender, times(1)).startAsynchronously(any());
         }
 
         verify(sender, times(1)).close();
@@ -445,30 +445,24 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
     }
 
     public void testInfer_ThrowsValidationErrorForInvalidRerankParams() throws IOException {
-        var sender = mock(Sender.class);
-
-        var factory = mock(HttpRequestSender.Factory.class);
-        when(factory.createSender()).thenReturn(sender);
-
         try (var service = createServiceWithMockSender()) {
             var model = ElasticInferenceServiceRerankModelTests.createModel(getUrl(webServer), "my-rerank-model-id");
             PlainActionFuture<InferenceServiceResults> listener = new PlainActionFuture<>();
 
-            var thrownException = expectThrows(
-                ValidationException.class,
-                () -> service.infer(
-                    model,
-                    "search query",
-                    Boolean.TRUE,
-                    10,
-                    List.of("doc1", "doc2", "doc3"),
-                    false,
-                    new HashMap<>(),
-                    InputType.SEARCH,
-                    InferenceAction.Request.DEFAULT_TIMEOUT,
-                    listener
-                )
+            service.infer(
+                model,
+                "search query",
+                Boolean.TRUE,
+                10,
+                List.of("doc1", "doc2", "doc3"),
+                false,
+                new HashMap<>(),
+                InputType.SEARCH,
+                InferenceAction.Request.DEFAULT_TIMEOUT,
+                listener
             );
+
+            var thrownException = expectThrows(ValidationException.class, () -> listener.actionGet(TIMEOUT));
 
             assertThat(
                 thrownException.getMessage(),
@@ -478,7 +472,7 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
     }
 
     public void testInfer_ThrowsErrorWhenTaskTypeIsNotValid_ChatCompletion() throws IOException {
-        var sender = mock(Sender.class);
+        var sender = createMockSender();
 
         var factory = mock(HttpRequestSender.Factory.class);
         when(factory.createSender()).thenReturn(sender);
@@ -512,7 +506,7 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
             );
 
             verify(factory, times(1)).createSender();
-            verify(sender, times(1)).start();
+            verify(sender, times(1)).startAsynchronously(any());
         }
 
         verify(sender, times(1)).close();
@@ -895,9 +889,9 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                 var denseResult = (ChunkedInferenceEmbedding) results.getFirst();
                 assertThat(denseResult.chunks(), hasSize(1));
                 assertEquals(new ChunkedInference.TextOffset(0, "hello world".length()), denseResult.chunks().getFirst().offset());
-                assertThat(denseResult.chunks().get(0).embedding(), instanceOf(TextEmbeddingFloatResults.Embedding.class));
+                assertThat(denseResult.chunks().get(0).embedding(), instanceOf(DenseEmbeddingFloatResults.Embedding.class));
 
-                var embedding = (TextEmbeddingFloatResults.Embedding) denseResult.chunks().get(0).embedding();
+                var embedding = (DenseEmbeddingFloatResults.Embedding) denseResult.chunks().get(0).embedding();
                 assertArrayEquals(new float[] { 0.123f, -0.456f, 0.789f }, embedding.values(), 0.0f);
             }
 
@@ -907,9 +901,9 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                 var denseResult = (ChunkedInferenceEmbedding) results.get(1);
                 assertThat(denseResult.chunks(), hasSize(1));
                 assertEquals(new ChunkedInference.TextOffset(0, "dense embedding".length()), denseResult.chunks().getFirst().offset());
-                assertThat(denseResult.chunks().getFirst().embedding(), instanceOf(TextEmbeddingFloatResults.Embedding.class));
+                assertThat(denseResult.chunks().getFirst().embedding(), instanceOf(DenseEmbeddingFloatResults.Embedding.class));
 
-                var embedding = (TextEmbeddingFloatResults.Embedding) denseResult.chunks().get(0).embedding();
+                var embedding = (DenseEmbeddingFloatResults.Embedding) denseResult.chunks().get(0).embedding();
                 assertArrayEquals(new float[] { 0.987f, -0.654f, 0.321f }, embedding.values(), 0.0f);
             }
 
@@ -977,15 +971,6 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                        "name": "Elastic",
                        "task_types": ["sparse_embedding", "chat_completion", "text_embedding"],
                        "configurations": {
-                           "rate_limit.requests_per_minute": {
-                               "description": "Minimize the number of rate limit errors.",
-                               "label": "Rate Limit",
-                               "required": false,
-                               "sensitive": false,
-                               "updatable": false,
-                               "type": "int",
-                               "supported_task_types": ["text_embedding", "sparse_embedding" , "rerank", "chat_completion"]
-                           },
                            "model_id": {
                                "description": "The name of the model to use for the inference task.",
                                "label": "Model ID",
@@ -1034,15 +1019,6 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                        "name": "Elastic",
                        "task_types": [],
                        "configurations": {
-                           "rate_limit.requests_per_minute": {
-                               "description": "Minimize the number of rate limit errors.",
-                               "label": "Rate Limit",
-                               "required": false,
-                               "sensitive": false,
-                               "updatable": false,
-                               "type": "int",
-                               "supported_task_types": ["text_embedding", "sparse_embedding" , "rerank", "chat_completion"]
-                           },
                            "model_id": {
                                "description": "The name of the model to use for the inference task.",
                                "label": "Model ID",
@@ -1262,11 +1238,11 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                       "task_types": ["embed/text/sparse"]
                     },
                     {
-                      "model_name": "multilingual-embed-v1",
+                      "model_name": "jina-embeddings-v3",
                       "task_types": ["embed/text/dense"]
                     },
                   {
-                      "model_name": "rerank-v1",
+                      "model_name": "elastic-rerank-v1",
                       "task_types": ["rerank/text/text-similarity"]
                     }
                 ]
@@ -1285,12 +1261,17 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                 is(
                     List.of(
                         new InferenceService.DefaultConfigId(
+                            ".elastic-rerank-v1",
+                            MinimalServiceSettings.rerank(ElasticInferenceService.NAME),
+                            service
+                        ),
+                        new InferenceService.DefaultConfigId(
                             ".elser-2-elastic",
                             MinimalServiceSettings.sparseEmbedding(ElasticInferenceService.NAME),
                             service
                         ),
                         new InferenceService.DefaultConfigId(
-                            ".multilingual-embed-v1-elastic",
+                            ".jina-embeddings-v3",
                             MinimalServiceSettings.textEmbedding(
                                 ElasticInferenceService.NAME,
                                 ElasticInferenceService.DENSE_TEXT_EMBEDDINGS_DIMENSIONS,
@@ -1302,11 +1283,6 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
                         new InferenceService.DefaultConfigId(
                             ".rainbow-sprinkles-elastic",
                             MinimalServiceSettings.chatCompletion(ElasticInferenceService.NAME),
-                            service
-                        ),
-                        new InferenceService.DefaultConfigId(
-                            ".rerank-v1-elastic",
-                            MinimalServiceSettings.rerank(ElasticInferenceService.NAME),
                             service
                         )
                     )
@@ -1321,10 +1297,10 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
             service.defaultConfigs(listener);
             var models = listener.actionGet(TIMEOUT);
             assertThat(models.size(), is(4));
-            assertThat(models.get(0).getConfigurations().getInferenceEntityId(), is(".elser-2-elastic"));
-            assertThat(models.get(1).getConfigurations().getInferenceEntityId(), is(".multilingual-embed-v1-elastic"));
-            assertThat(models.get(2).getConfigurations().getInferenceEntityId(), is(".rainbow-sprinkles-elastic"));
-            assertThat(models.get(3).getConfigurations().getInferenceEntityId(), is(".rerank-v1-elastic"));
+            assertThat(models.get(0).getConfigurations().getInferenceEntityId(), is(".elastic-rerank-v1"));
+            assertThat(models.get(1).getConfigurations().getInferenceEntityId(), is(".elser-2-elastic"));
+            assertThat(models.get(2).getConfigurations().getInferenceEntityId(), is(".jina-embeddings-v3"));
+            assertThat(models.get(3).getConfigurations().getInferenceEntityId(), is(".rainbow-sprinkles-elastic"));
         }
     }
 
@@ -1433,7 +1409,7 @@ public class ElasticInferenceServiceTests extends ESSingleNodeTestCase {
             return Void.TYPE;
         }).when(mockAuthHandler).getAuthorization(any(), any());
 
-        var sender = mock(Sender.class);
+        var sender = createMockSender();
 
         var factory = mock(HttpRequestSender.Factory.class);
         when(factory.createSender()).thenReturn(sender);

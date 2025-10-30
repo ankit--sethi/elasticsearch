@@ -9,9 +9,16 @@
 
 package org.elasticsearch.action;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.core.Nullable;
 
+import java.io.IOException;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -28,7 +35,7 @@ import java.util.Set;
  * {
  *   "original": "my-index-*",
  *   "localExpressions": {
- *     "expressions": ["my-index-000001", "my-index-000002"],
+ *     "indices": ["my-index-000001", "my-index-000002"],
  *     "localIndexResolutionResult": "SUCCESS"
  *   },
  *   "remoteExpressions": ["remote1:my-index-*", "remote2:my-index-*"]
@@ -38,16 +45,35 @@ import java.util.Set;
  * @param original the original index expression, as provided by the user
  * @param localExpressions the local expressions that replace the original along with their resolution result
  *                         and failure info
- * @param remoteExpressions the remote expressions that replace the original
+ * @param remoteExpressions the remote expressions that replace the original one (in the case of CPS/flat index resolution).
+ *                          Only set on the local ResolvedIndexExpression, empty otherwise.
  */
-public record ResolvedIndexExpression(String original, LocalExpressions localExpressions, Set<String> remoteExpressions) {
+public record ResolvedIndexExpression(String original, LocalExpressions localExpressions, Set<String> remoteExpressions)
+    implements
+        Writeable {
+
+    private static final Logger logger = LogManager.getLogger(ResolvedIndexExpression.class);
+
+    public ResolvedIndexExpression(StreamInput in) throws IOException {
+        this(in.readString(), new LocalExpressions(in), in.readCollectionAsImmutableSet(StreamInput::readString));
+    }
+
+    @Override
+    public void writeTo(StreamOutput out) throws IOException {
+        out.writeString(original);
+        localExpressions.writeTo(out);
+        out.writeStringCollection(remoteExpressions);
+    }
+
     /**
      * Indicates if a local index resolution attempt was successful or failed.
      * Failures can be due to concrete resources not being visible (either missing or not visible due to indices options)
      * or unauthorized concrete resources.
      * A wildcard expression resolving to nothing is still considered a successful resolution.
+     * The NONE result indicates that no local resolution was attempted because the expression is known to be remote-only.
      */
     public enum LocalIndexResolutionResult {
+        NONE,
         SUCCESS,
         CONCRETE_RESOURCE_NOT_VISIBLE,
         CONCRETE_RESOURCE_UNAUTHORIZED,
@@ -56,14 +82,100 @@ public record ResolvedIndexExpression(String original, LocalExpressions localExp
     /**
      * Represents local (non-remote) resolution results, including expanded indices, and a {@link LocalIndexResolutionResult}.
      */
-    public record LocalExpressions(
-        Set<String> expressions,
-        LocalIndexResolutionResult localIndexResolutionResult,
-        @Nullable ElasticsearchException exception
-    ) {
-        public LocalExpressions {
+    public static final class LocalExpressions implements Writeable {
+        private final Set<String> indices;
+        private final LocalIndexResolutionResult localIndexResolutionResult;
+        @Nullable
+        private ElasticsearchException exception;
+
+        /**
+         * @param indices represents the resolved concrete indices backing the expression
+         */
+        public LocalExpressions(
+            Set<String> indices,
+            LocalIndexResolutionResult localIndexResolutionResult,
+            @Nullable ElasticsearchException exception
+        ) {
             assert localIndexResolutionResult != LocalIndexResolutionResult.SUCCESS || exception == null
                 : "If the local resolution result is SUCCESS, exception must be null";
+            this.indices = indices;
+            this.localIndexResolutionResult = localIndexResolutionResult;
+            this.exception = exception;
+        }
+
+        public Set<String> indices() {
+            return indices;
+        }
+
+        public LocalIndexResolutionResult localIndexResolutionResult() {
+            return localIndexResolutionResult;
+        }
+
+        @Nullable
+        public ElasticsearchException exception() {
+            return exception;
+        }
+
+        public void setExceptionIfUnset(ElasticsearchException exception) {
+            assert localIndexResolutionResult != LocalIndexResolutionResult.SUCCESS
+                : "If the local resolution result is SUCCESS, exception must be null";
+            Objects.requireNonNull(exception);
+
+            if (this.exception == null) {
+                this.exception = exception;
+            } else if (Objects.equals(this.exception.getMessage(), exception.getMessage()) == false) {
+                // see https://github.com/elastic/elasticsearch/issues/135799
+                var message = "Exception is already set: " + exception.getMessage();
+                logger.debug(message);
+                assert false : message;
+            }
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) return true;
+            if (obj == null || obj.getClass() != this.getClass()) return false;
+            var that = (LocalExpressions) obj;
+            return Objects.equals(this.indices, that.indices)
+                && Objects.equals(this.localIndexResolutionResult, that.localIndexResolutionResult)
+                && Objects.equals(this.exception, that.exception);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(indices, localIndexResolutionResult, exception);
+        }
+
+        @Override
+        public String toString() {
+            return "LocalExpressions["
+                + "indices="
+                + indices
+                + ", "
+                + "localIndexResolutionResult="
+                + localIndexResolutionResult
+                + ", "
+                + "exception="
+                + exception
+                + ']';
+        }
+
+        // Singleton for the case where all expressions in a ResolvedIndexExpression instance are remote
+        public static final LocalExpressions NONE = new LocalExpressions(Set.of(), LocalIndexResolutionResult.NONE, null);
+
+        public LocalExpressions(StreamInput in) throws IOException {
+            this(
+                in.readCollectionAsImmutableSet(StreamInput::readString),
+                in.readEnum(LocalIndexResolutionResult.class),
+                ElasticsearchException.readException(in)
+            );
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeStringCollection(indices);
+            out.writeEnum(localIndexResolutionResult);
+            ElasticsearchException.writeException(exception, out);
         }
     }
 }

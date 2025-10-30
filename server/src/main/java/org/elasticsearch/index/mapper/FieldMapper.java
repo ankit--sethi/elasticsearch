@@ -1660,6 +1660,30 @@ public abstract class FieldMapper extends Mapper {
         }
     }
 
+    /**
+     * Creates mappers for fields that require additional context for supporting synthetic source.
+     */
+    public abstract static class TextFamilyBuilder extends Builder {
+
+        private final IndexVersion indexCreatedVersion;
+        private final boolean isWithinMultiField;
+
+        protected TextFamilyBuilder(String name, IndexVersion indexCreatedVersion, boolean isWithinMultiField) {
+            super(name);
+            this.indexCreatedVersion = indexCreatedVersion;
+            this.isWithinMultiField = isWithinMultiField;
+        }
+
+        public IndexVersion indexCreatedVersion() {
+            return indexCreatedVersion;
+        }
+
+        public boolean isWithinMultiField() {
+            return isWithinMultiField;
+        }
+
+    }
+
     public static BiConsumer<String, MappingParserContext> notInMultiFields(String type) {
         return (n, c) -> {
             if (c.isWithinMultiField()) {

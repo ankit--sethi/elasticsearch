@@ -18,7 +18,6 @@ import org.elasticsearch.compute.aggregation.LastLongByTimestampAggregatorFuncti
 import org.elasticsearch.xpack.esql.EsqlIllegalArgumentException;
 import org.elasticsearch.xpack.esql.core.expression.Expression;
 import org.elasticsearch.xpack.esql.core.expression.Literal;
-import org.elasticsearch.xpack.esql.core.expression.UnresolvedAttribute;
 import org.elasticsearch.xpack.esql.core.tree.NodeInfo;
 import org.elasticsearch.xpack.esql.core.tree.Source;
 import org.elasticsearch.xpack.esql.core.type.DataType;
@@ -29,6 +28,7 @@ import org.elasticsearch.xpack.esql.expression.function.FunctionInfo;
 import org.elasticsearch.xpack.esql.expression.function.FunctionType;
 import org.elasticsearch.xpack.esql.expression.function.OptionalArgument;
 import org.elasticsearch.xpack.esql.expression.function.Param;
+import org.elasticsearch.xpack.esql.expression.function.TimestampAware;
 import org.elasticsearch.xpack.esql.io.stream.PlanStreamInput;
 import org.elasticsearch.xpack.esql.planner.ToAggregator;
 
@@ -39,7 +39,7 @@ import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.Param
 import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.ParamOrdinal.SECOND;
 import static org.elasticsearch.xpack.esql.core.expression.TypeResolutions.isType;
 
-public class LastOverTime extends TimeSeriesAggregateFunction implements OptionalArgument, ToAggregator {
+public class LastOverTime extends TimeSeriesAggregateFunction implements OptionalArgument, ToAggregator, TimestampAware {
     public static final NamedWriteableRegistry.Entry ENTRY = new NamedWriteableRegistry.Entry(
         Expression.class,
         "LastOverTime",
@@ -57,11 +57,14 @@ public class LastOverTime extends TimeSeriesAggregateFunction implements Optiona
         preview = true,
         examples = { @Example(file = "k8s-timeseries", tag = "last_over_time") }
     )
-    public LastOverTime(Source source, @Param(name = "field", type = { "long", "integer", "double", "_tsid" }) Expression field) {
-        this(source, field, new UnresolvedAttribute(source, "@timestamp"));
-    }
-
-    public LastOverTime(Source source, Expression field, Expression timestamp) {
+    public LastOverTime(
+        Source source,
+        @Param(
+            name = "field",
+            type = { "counter_long", "counter_integer", "counter_double", "long", "integer", "double", "_tsid" }
+        ) Expression field,
+        Expression timestamp
+    ) {
         this(source, field, Literal.TRUE, timestamp);
     }
 
@@ -110,14 +113,14 @@ public class LastOverTime extends TimeSeriesAggregateFunction implements Optiona
 
     @Override
     public DataType dataType() {
-        return field().dataType();
+        return field().dataType().noCounter();
     }
 
     @Override
     protected TypeResolution resolveType() {
         return isType(
             field(),
-            dt -> (dt.isNumeric() && dt != DataType.UNSIGNED_LONG) || dt == DataType.TSID_DATA_TYPE,
+            dt -> (dt.noCounter().isNumeric() && dt != DataType.UNSIGNED_LONG) || dt == DataType.TSID_DATA_TYPE,
             sourceText(),
             DEFAULT,
             "numeric except unsigned_long"
@@ -132,9 +135,9 @@ public class LastOverTime extends TimeSeriesAggregateFunction implements Optiona
         // we can read the first encountered value for each group of `_tsid` and time bucket.
         final DataType type = field().dataType();
         return switch (type) {
-            case LONG -> new LastLongByTimestampAggregatorFunctionSupplier();
-            case INTEGER -> new LastIntByTimestampAggregatorFunctionSupplier();
-            case DOUBLE -> new LastDoubleByTimestampAggregatorFunctionSupplier();
+            case LONG, COUNTER_LONG -> new LastLongByTimestampAggregatorFunctionSupplier();
+            case INTEGER, COUNTER_INTEGER -> new LastIntByTimestampAggregatorFunctionSupplier();
+            case DOUBLE, COUNTER_DOUBLE -> new LastDoubleByTimestampAggregatorFunctionSupplier();
             case FLOAT -> new LastFloatByTimestampAggregatorFunctionSupplier();
             case TSID_DATA_TYPE -> new LastBytesRefByTimestampAggregatorFunctionSupplier();
             default -> throw EsqlIllegalArgumentException.illegalDataType(type);
@@ -151,7 +154,8 @@ public class LastOverTime extends TimeSeriesAggregateFunction implements Optiona
         return "last_over_time(" + field() + ")";
     }
 
-    Expression timestamp() {
+    @Override
+    public Expression timestamp() {
         return timestamp;
     }
 }
