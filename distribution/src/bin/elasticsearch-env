@@ -32,10 +32,14 @@ while [ "`basename "$ES_HOME"`" != "bin" ]; do
 done
 ES_HOME=`dirname "$ES_HOME"`
 
+echo $ES_JAVA_HOME
+echo "this is 1 ^"
 # now set the path to java
 if [ ! -z "$ES_JAVA_HOME" ]; then
   JAVA="$ES_JAVA_HOME/bin/java"
   JAVA_TYPE="ES_JAVA_HOME"
+  echo $ES_JAVA_HOME
+  echo "this is 2 ^"
 
   if [ ! -x "$JAVA" ]; then
     echo "could not find java in $JAVA_TYPE at $JAVA" >&2
@@ -46,13 +50,19 @@ if [ ! -z "$ES_JAVA_HOME" ]; then
   "$JAVA" -cp "$ES_HOME/lib/java-version-checker/*" org.elasticsearch.tools.java_version_checker.JavaVersionChecker
 else
   # use the bundled JDK (default)
+  echo $ES_JAVA_HOME
+    echo "this is 3 ^"
   if [ "$(uname -s)" = "Darwin" ]; then
     # macOS has a different structure
     JAVA="$ES_HOME/jdk.app/Contents/Home/bin/java"
   else
     JAVA="$ES_HOME/jdk/bin/java"
+    echo $ES_JAVA_HOME
+      echo "this is 4 ^"
   fi
   JAVA_TYPE="bundled JDK"
+  echo $ES_JAVA_HOME
+    echo "this is 5 ^"
 fi
 
 # do not let JAVA_TOOL_OPTIONS OR _JAVA_OPTIONS slip in (as the JVM does by default)

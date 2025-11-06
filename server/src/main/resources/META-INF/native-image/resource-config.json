@@ -1,0 +1,17 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": "\\QIMPL-JARS/.*\\E"},
+      {"pattern": "\\Q.*LISTING.TXT\\E"},
+      {"pattern": "\\Qorg/elasticsearch/TransportVersions.csv\\E"},
+      {"pattern": "\\Qorg/elasticsearch/index/IndexVersions.csv\\E"},
+      {
+        "pattern": "\\QMETA-INF/services/org.elasticsearch.xcontent.spi.XContentProvider\\E"
+      },
+      {
+        "pattern": "\\QMETA-INF/services/org.elasticsearch.jdk.ModuleQualifiedExportsService\\E"
+      }
+
+    ]
+  }
+}

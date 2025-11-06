@@ -54,6 +54,7 @@ plugins {
   id 'elasticsearch.release-tools'
   id 'elasticsearch.versions'
   id 'com.gradleup.nmcp.aggregation'
+  id 'org.graalvm.buildtools.native' version '0.11.0'
 }
 
 version = VersionProperties.elasticsearch

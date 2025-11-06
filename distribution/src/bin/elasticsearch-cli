@@ -1,8 +1,13 @@
 #!/bin/bash
 
 set -e -o pipefail
-
+echo "first ever"
+echo $ES_JAVA_HOME
 source "`dirname "$0"`"/elasticsearch-env
+echo "FOO_HELLO"
+echo "TRUST ME"
+echo $JAVA
+echo $ES_JAVA_HOME
 
 # use a small heap size for the CLI tools, and thus the serial collector to
 # avoid stealing many CPU cycles; a user can override by setting CLI_JAVA_OPTS

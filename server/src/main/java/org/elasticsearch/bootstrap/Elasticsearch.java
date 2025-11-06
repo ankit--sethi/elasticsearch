@@ -445,7 +445,7 @@ class Elasticsearch {
      */
     static void initializeNatives(final Path tmpFile, final boolean mlockAll, final boolean systemCallFilter, final boolean ctrlHandler) {
         final Logger logger = LogManager.getLogger(Elasticsearch.class);
-        var nativeAccess = NativeAccess.instance();
+        /*var nativeAccess = NativeAccess.instance();
 
         // check if the user is running as root, and bail
         if (nativeAccess.definitelyRunningAsRoot()) {
@@ -453,33 +453,33 @@ class Elasticsearch {
         }
 
         if (systemCallFilter) {
-            /*
-             * Try to install system call filters; if they fail to install; a bootstrap check will fail startup in production mode.
-             *
-             * TODO: should we fail hard here if system call filters fail to install, or remain lenient in non-production environments?
-             */
-            nativeAccess.tryInstallExecSandbox();
-        }
+            *//*
+               * Try to install system call filters; if they fail to install; a bootstrap check will fail startup in production mode.
+               *
+               * TODO: should we fail hard here if system call filters fail to install, or remain lenient in non-production environments?
+               *//*
+                  nativeAccess.tryInstallExecSandbox();
+                  }
 
-        // mlockall if requested
-        if (mlockAll) {
-            nativeAccess.tryLockMemory();
-        }
+                  // mlockall if requested
+                  if (mlockAll) {
+                  nativeAccess.tryLockMemory();
+                  }
 
-        // listener for windows close event
-        if (ctrlHandler) {
-            var windowsFunctions = nativeAccess.getWindowsFunctions();
-            if (windowsFunctions != null) {
-                windowsFunctions.addConsoleCtrlHandler(code -> {
-                    if (CTRL_CLOSE_EVENT == code) {
-                        logger.info("running graceful exit on windows");
-                        shutdown();
-                        return true;
-                    }
-                    return false;
-                });
-            }
-        }
+                  // listener for windows close event
+                  if (ctrlHandler) {
+                  var windowsFunctions = nativeAccess.getWindowsFunctions();
+                  if (windowsFunctions != null) {
+                   windowsFunctions.addConsoleCtrlHandler(code -> {
+                       if (CTRL_CLOSE_EVENT == code) {
+                           logger.info("running graceful exit on windows");
+                           shutdown();
+                           return true;
+                       }
+                       return false;
+                   });
+                  }
+                  }*/
 
         if (IOUtils.LINUX) {
             setCoredumpFilter();

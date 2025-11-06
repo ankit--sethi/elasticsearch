@@ -9,6 +9,8 @@ dependencies {
   implementation "com.fasterxml.jackson.core:jackson-annotations:${versions.jackson}"
   implementation "com.fasterxml.jackson.core:jackson-databind:${versions.jackson}"
   implementation "org.elasticsearch.gradle:reaper"
+  compileOnly 'com.google.errorprone:error_prone_annotations:2.41.0'
+  compileOnly 'com.github.spotbugs:spotbugs-annotations:4.9.3'
 
   testImplementation "junit:junit:${versions.junit}"
   testImplementation "org.hamcrest:hamcrest:${versions.hamcrest}"
