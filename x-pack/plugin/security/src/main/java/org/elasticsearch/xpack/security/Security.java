@@ -1219,6 +1219,7 @@ public class Security extends Plugin
         DestructiveOperations destructiveOperations = new DestructiveOperations(settings, clusterService.getClusterSettings());
 
         RemoteClusterSecurityExtension.Components rcsComponents = new RemoteClusterSecurityComponents(
+            auditTrailService,
             authcService.get(),
             authzService,
             securityContext.get(),
