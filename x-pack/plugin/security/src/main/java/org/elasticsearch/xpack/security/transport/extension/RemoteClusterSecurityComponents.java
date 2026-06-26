@@ -16,12 +16,14 @@ import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.watcher.ResourceWatcherService;
 import org.elasticsearch.xpack.core.security.SecurityContext;
+import org.elasticsearch.xpack.security.audit.AuditTrailService;
 import org.elasticsearch.xpack.security.authc.ApiKeyService;
 import org.elasticsearch.xpack.security.authc.AuthenticationService;
 import org.elasticsearch.xpack.security.authz.AuthorizationService;
 
 public class RemoteClusterSecurityComponents implements RemoteClusterSecurityExtension.Components {
 
+    private final AuditTrailService auditTrailService;
     private final AuthenticationService authenticationService;
     private final AuthorizationService authorizationService;
     private final SecurityContext securityContext;
@@ -36,6 +38,7 @@ public class RemoteClusterSecurityComponents implements RemoteClusterSecurityExt
     private final Client client;
 
     public RemoteClusterSecurityComponents(
+        AuditTrailService auditTrailService,
         AuthenticationService authenticationService,
         AuthorizationService authorizationService,
         SecurityContext securityContext,
@@ -49,6 +52,7 @@ public class RemoteClusterSecurityComponents implements RemoteClusterSecurityExt
         Settings settings,
         Client client
     ) {
+        this.auditTrailService = auditTrailService;
         this.authenticationService = authenticationService;
         this.authorizationService = authorizationService;
         this.securityContext = securityContext;
@@ -61,6 +65,11 @@ public class RemoteClusterSecurityComponents implements RemoteClusterSecurityExt
         this.threadPool = threadPool;
         this.settings = settings;
         this.client = client;
+    }
+
+    @Override
+    public AuditTrailService auditTrailService() {
+        return auditTrailService;
     }
 
     @Override
